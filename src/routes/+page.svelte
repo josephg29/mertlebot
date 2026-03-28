@@ -7,6 +7,27 @@
   const ICON_TRASH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2 0 0,1-2,2H8a2,2 0 0,1-2-2L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4a1,1 0 0,1,1-1h4a1,1 0 0,1,1,1v2"/></svg>';
   const ICON_CHECK = '<svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1,5 4,8 9,2"/></svg>';
 
+  /* ── Step instruction-book icons (pixel-art style) ── */
+  const STEP_ICONS = {
+    wire:     '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="M4 12h6"/><path d="M14 12h6"/><circle cx="12" cy="12" r="2"/><path d="M12 4v6"/><path d="M12 14v6"/></svg>',
+    code:     '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="8,6 2,12 8,18"/><polyline points="16,6 22,12 16,18"/><line x1="14" y1="4" x2="10" y2="20"/></svg>',
+    power:    '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polygon points="13,2 4,14 12,14 11,22 20,10 12,10"/></svg>',
+    test:     '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><circle cx="12" cy="12" r="10"/><polyline points="8,12 11,15 16,9"/></svg>',
+    assemble: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
+    default:  '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2"/><path d="M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42"/><path d="M19.78 4.22l-1.42 1.42M5.64 18.36l-1.42 1.42"/></svg>'
+  };
+  const STEP_LABELS = { wire: 'WIRE', code: 'CODE', power: 'POWER', test: 'TEST', assemble: 'BUILD', default: 'STEP' };
+
+  function classifyAction(text) {
+    const t = text.toLowerCase();
+    if (/\b(connect|wire|insert|plug|jumper|breadboard|pin\s|attach.*to|hook|link|run a wire)\b/.test(t)) return 'wire';
+    if (/\b(upload|flash|program|code|sketch|ide|compile|open.*ide|download.*code|load)\b/.test(t)) return 'code';
+    if (/\b(power|battery|usb|plug.?in|voltage|supply|adapter|turn on|switch on)\b/.test(t)) return 'power';
+    if (/\b(test|check|verify|press|try|run|blink|observe|confirm|should see|look for|watch)\b/.test(t)) return 'test';
+    if (/\b(solder|mount|secure|screw|glue|tape|place|position|orient|bend|trim|cut)\b/.test(t)) return 'assemble';
+    return 'default';
+  }
+
   /* ── Helper ── */
   const gid = id => document.getElementById(id);
 
@@ -357,7 +378,7 @@
         } else { html += '</ul>'; }
         inUl = false;
       }
-      if (inOl) { html += '</ol>'; inOl = false; }
+      if (inOl) { html += '</div>'; inOl = false; }
     }
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -379,7 +400,7 @@
       if (line.startsWith('# ')) { cl(); html += '<div class="project-name" contenteditable="true" spellcheck="false" onblur="persistTitle(this)">' + inlineFmt(esc(line.slice(2).trim())) + '</div><div class="project-name-hint">click to rename</div>'; continue; }
       if (line.startsWith('## ')) { cl(); sec = line.slice(3).trim(); partsInSection = []; html += '<div class="section-header">' + esc(sec) + '</div>'; continue; }
       if (/^[-*]\s/.test(line)) {
-        if (inOl) { html += '</ol>'; inOl = false; }
+        if (inOl) { html += '</div>'; inOl = false; }
         if (!inUl) { html += '<ul class="parts-list">'; inUl = true; }
         const partText = line.replace(/^[-*]\s/, '');
         if (/^PARTS$/i.test(sec)) {
@@ -389,7 +410,15 @@
         } else { html += '<li>' + inlineFmt(esc(partText)) + '</li>'; }
         continue;
       }
-      if (/^\d+\.\s/.test(line)) { if (inUl) { html += '</ul>'; inUl = false; } if (!inOl) { html += '<ol class="steps-list">'; inOl = true; } html += '<li>' + inlineFmt(esc(line.replace(/^\d+\.\s/, ''))) + '</li>'; continue; }
+      if (/^\d+\.\s/.test(line)) {
+        if (inUl) { html += '</ul>'; inUl = false; }
+        if (!inOl) { html += '<div class="step-book">'; inOl = true; }
+        const stepNum = line.match(/^(\d+)\./)[1];
+        const stepText = line.replace(/^\d+\.\s/, '');
+        const action = classifyAction(stepText);
+        html += '<div class="step-card"><div class="step-badge">' + esc(stepNum) + '</div><div class="step-icon">' + STEP_ICONS[action] + '</div><div class="step-body"><div class="step-action">' + STEP_LABELS[action] + '</div><div class="step-text">' + inlineFmt(esc(stepText)) + '</div></div></div>';
+        continue;
+      }
       if (!line.trim()) {
         let next = ''; for (let j = i + 1; j < lines.length; j++) { if (lines[j].trim()) { next = lines[j]; break; } }
         if (inOl && /^\d+\.\s/.test(next)) continue;
@@ -812,6 +841,22 @@
     chatInput.addEventListener('input', () => { charCount.textContent = `${chatInput.value.length}/300`; });
     chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') send(chatInput.value.trim()); });
     sendBtn.addEventListener('click', () => { if (generating) { if (controller) controller.abort(); return; } send(chatInput.value.trim()); });
+
+    /* Responsive placeholder — swaps text so it never clips */
+    const CHAT_PLACEHOLDERS = [
+      [250, 'describe a project or ask to edit...'],
+      [150, 'describe or ask to edit...'],
+      [90,  'type a message...'],
+      [0,   '...']
+    ];
+    const updateChatPlaceholder = () => {
+      const w = chatInput.offsetWidth;
+      for (const [min, text] of CHAT_PLACEHOLDERS) {
+        if (w >= min) { chatInput.placeholder = text; return; }
+      }
+    };
+    new ResizeObserver(updateChatPlaceholder).observe(chatInput);
+    updateChatPlaceholder();
     heroInput.addEventListener('keydown', e => { if (e.key === 'Enter') send(heroInput.value.trim()); });
     heroGo.addEventListener('click', () => send(heroInput.value.trim()));
 

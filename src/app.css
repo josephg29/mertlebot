@@ -679,27 +679,98 @@ body {
   background: var(--surface);
 }
 
-.steps-list { counter-reset: step-counter; }
-.steps-list li {
+/* ── Instruction-book step cards ── */
+.step-book {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+  padding-left: 0;
+  list-style: none;
+}
+.step-book::before {
+  content: '';
+  position: absolute;
+  left: 17px;
+  top: 36px;
+  bottom: 36px;
+  width: 2px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--border-col) 0px,
+    var(--border-col) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  pointer-events: none;
+}
+.step-card {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 14px;
+  padding: 14px;
   background: var(--surface2);
-  border-left: 3px solid var(--cta);
-  font-size: calc(11px * var(--fs, 1));
-  line-height: 1.5;
-  counter-increment: step-counter;
+  border: 3px solid var(--border-col);
+  box-shadow: 4px 4px 0 rgba(0,0,0,0.4);
+  position: relative;
+  z-index: 1;
+  transition: transform 0.12s var(--spring), box-shadow 0.12s var(--spring);
+  animation: voxel-hop-in 0.25s var(--snap) both;
 }
-.steps-list li::before {
-  content: counter(step-counter);
+.step-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 4px 6px 0 rgba(0,0,0,0.4);
+}
+.step-card:nth-child(2)  { animation-delay: 0.06s; }
+.step-card:nth-child(3)  { animation-delay: 0.12s; }
+.step-card:nth-child(4)  { animation-delay: 0.18s; }
+.step-card:nth-child(5)  { animation-delay: 0.24s; }
+.step-card:nth-child(6)  { animation-delay: 0.30s; }
+.step-card:nth-child(7)  { animation-delay: 0.36s; }
+.step-card:nth-child(8)  { animation-delay: 0.42s; }
+.step-card:nth-child(9)  { animation-delay: 0.48s; }
+.step-card:nth-child(10) { animation-delay: 0.54s; }
+.step-card:nth-child(11) { animation-delay: 0.60s; }
+.step-card:nth-child(12) { animation-delay: 0.66s; }
+.step-badge {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cta);
+  color: var(--bg);
   font-family: 'Press Start 2P', monospace;
-  font-size: 8px;
-  color: var(--cta);
-  min-width: 20px;
+  font-size: 11px;
   flex-shrink: 0;
-  padding-top: 2px;
+  box-shadow: 2px 2px 0 var(--cta-dark);
   -webkit-font-smoothing: none;
+}
+.step-icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.step-icon svg { width: 24px; height: 24px; }
+.step-body { flex: 1; min-width: 0; }
+.step-action {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 6px;
+  color: var(--cta-light);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  -webkit-font-smoothing: none;
+}
+.step-text {
+  font-size: calc(11px * var(--fs, 1));
+  line-height: 1.6;
+  color: var(--text);
 }
 
 .part-link {
@@ -1778,6 +1849,12 @@ strong { color: var(--primary); }
   .hero-card  { padding: 20px 16px; }
   .hero-title { font-size: 14px; }
   .del-modal  { margin: 16px; }
+  .step-card   { padding: 10px; gap: 10px; }
+  .step-badge  { width: 28px; height: 28px; font-size: 9px; }
+  .step-icon   { width: 22px; height: 22px; }
+  .step-icon svg { width: 18px; height: 18px; }
+  .step-action { font-size: 5px; }
+  .step-book::before { left: 13px; }
 }
 
 /* ─────────────────────── 25. REDUCED MOTION ─────────────────────── */
