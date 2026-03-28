@@ -44,6 +44,7 @@ export async function POST({ request }) {
   const prompt = body.prompt?.trim();
   const skill = body.skill || 'MONKEY';
   const age = Number(body.age) || 25;
+  const clarifications = typeof body.clarifications === 'string' ? body.clarifications.trim() : null;
 
   if (!prompt) return json({ error: 'Prompt required' }, { status: 400 });
   if (prompt.length > 50000) return json({ error: 'Prompt too long' }, { status: 400 });
@@ -61,11 +62,13 @@ export async function POST({ request }) {
   const chatSystem = CHAT_SYSTEM + '\n\n' + ageContext(age);
   const fullSystem = intent === 'BUILD' ? buildSystem : chatSystem;
 
+  const userContent = (intent === 'BUILD' && clarifications) ? `${prompt}\n\n${clarifications}` : prompt;
+
   const msgStream = client.messages.stream({
     model: 'claude-sonnet-4-6',
     max_tokens: intent === 'BUILD' ? 4096 : 1024,
     system: fullSystem,
-    messages: [{ role: 'user', content: prompt }],
+    messages: [{ role: 'user', content: userContent }],
   });
 
   const enc = new TextEncoder();

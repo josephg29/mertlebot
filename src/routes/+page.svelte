@@ -1,5 +1,7 @@
 <script>
   import { onMount } from 'svelte';
+  import WiringCanvas from '$lib/wiregen/WiringCanvas.svelte';
+  import { mount, unmount } from 'svelte';
 
   /* ── Shared SVG icons ── */
   const ICON_TRASH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2 0 0,1-2,2H8a2,2 0 0,1-2-2L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4a1,1 0 0,1,1-1h4a1,1 0 0,1,1,1v2"/></svg>';
@@ -25,6 +27,10 @@
   const selectedTs = new Set();
   let _del = { cb: null, guide: null, prompt: null };
   let _settingsTrigger = null;
+  let _wiregenInstances = [];
+
+  /* ── Clarify state ── */
+  let clarifyQuestions = [], clarifyAnswers = {}, clarifyIdx = 0, clarifyOriginalPrompt = '';
 
   const SKILLS = { 1: 'MONKEY', 2: 'NOVICE', 3: 'BUILDER', 4: 'HACKER', 5: 'EXPERT' };
   const INIT_MSG = '<div class="msg bot"><div class="msg-who">MERTLE.BOT</div><div class="msg-body">Ready. Describe any hardware project to get started.</div></div>';
@@ -37,6 +43,9 @@
   /* ── Session ── */
   function newSession() {
     if (generating && controller) { controller.abort(); controller = null; setGenerating(false); }
+    gid('clarifyBg') && gid('clarifyBg').classList.remove('open');
+    clarifyQuestions = []; clarifyAnswers = {}; clarifyOriginalPrompt = '';
+    destroyWiregenInstances();
     buildOutput.classList.remove('active'); buildOutput.innerHTML = '';
     emptyState.classList.remove('hidden'); outputContext.textContent = '';
     lastPrompt = ''; lastGuide = ''; lastSkill = ''; lastTs = null;
@@ -82,8 +91,10 @@
     lastPrompt = item.prompt; lastGuide = item.guide; lastSkill = item.skill; lastTs = item.ts;
     chatLog.innerHTML = item.chat || INIT_MSG;
     emptyState.classList.add('hidden');
+    destroyWiregenInstances();
     buildOutput.classList.add('active'); buildOutput.classList.remove('streaming-cursor');
     buildOutput.innerHTML = renderMd(item.guide);
+    mountWiregenDiagrams();
     workspace.classList.remove('no-build');
     requestAnimationFrame(() => {
       const op = workspace.querySelector('.output');
@@ -214,7 +225,7 @@
       el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><span class="hero-recent-prompt">${esc(item.prompt)}</span><span class="hero-recent-meta">${esc(ago)}</span><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
       const go = () => {
         if (selectedTs.size > 0) { toggleSelect(item.ts); return; }
-        if (restoreProject(item)) { dismissHero(); } else { heroInput.value = item.prompt; send(item.prompt); }
+        if (restoreProject(item)) { dismissHero(); } else { heroInput.value = item.prompt; send(item.prompt, null); }
       };
       el.addEventListener('click', go);
       el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
@@ -336,7 +347,7 @@
   }
 
   function renderMd(raw) {
-    let html = ''; const lines = raw.split('\n'); let inCode = false, code = '', inUl = false, inOl = false, sec = '';
+    let html = ''; const lines = raw.split('\n'); let inCode = false, codeLang = '', code = '', inUl = false, inOl = false, sec = '';
     let partsInSection = [];
     function cl() {
       if (inUl) {
@@ -352,10 +363,16 @@
       const line = lines[i];
       if (line.trimStart().startsWith('```')) {
         if (inCode) {
-          const e = highlightArduino(code.trimEnd()), id = 'c-' + Math.random().toString(36).slice(2, 8), fn = guessFile(code, sec);
-          html += '<div class="code-wrap" id="wrap-' + id + '"><div class="code-file-bar" onclick="toggleCode(\'' + id + '\')"><span class="file-arrow">&#9654;</span><span class="file-name">' + esc(fn) + '</span><div class="code-file-actions"><button class="code-file-btn" onclick="event.stopPropagation();copyCode(\'' + id + '\',this)">COPY</button><button class="code-file-btn" onclick="event.stopPropagation();downloadCode(\'' + id + '\')">DOWNLOAD</button></div></div><div class="wiring-expand"><pre class="wiring-block" id="' + id + '">' + e + '</pre></div></div>';
-          code = ''; inCode = false;
-        } else { cl(); inCode = true; }
+          if (codeLang === 'wiregen') {
+            const jsonStr = code.trim();
+            const escaped = jsonStr.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+            html += '<div class="wiregen-mount" data-diagram="' + escaped + '"></div>';
+          } else {
+            const e = highlightArduino(code.trimEnd()), id = 'c-' + Math.random().toString(36).slice(2, 8), fn = guessFile(code, sec);
+            html += '<div class="code-wrap" id="wrap-' + id + '"><div class="code-file-bar" onclick="toggleCode(\'' + id + '\')"><span class="file-arrow">&#9654;</span><span class="file-name">' + esc(fn) + '</span><div class="code-file-actions"><button class="code-file-btn" onclick="event.stopPropagation();copyCode(\'' + id + '\',this)">COPY</button><button class="code-file-btn" onclick="event.stopPropagation();downloadCode(\'' + id + '\')">DOWNLOAD</button></div></div><div class="wiring-expand"><pre class="wiring-block" id="' + id + '">' + e + '</pre></div></div>';
+          }
+          code = ''; codeLang = ''; inCode = false;
+        } else { cl(); inCode = true; codeLang = line.trimStart().slice(3).trim().toLowerCase(); }
         continue;
       }
       if (inCode) { code += line + '\n'; continue; }
@@ -382,8 +399,13 @@
       cl(); html += '<p>' + inlineFmt(esc(line)) + '</p>';
     }
     if (inCode) {
-      const e = highlightArduino(code.trimEnd()), id = 'c-' + Math.random().toString(36).slice(2, 8), fn = guessFile(code, sec);
-      html += '<div class="code-wrap" id="wrap-' + id + '"><div class="code-file-bar" onclick="toggleCode(\'' + id + '\')"><span class="file-arrow">&#9654;</span><span class="file-name">' + esc(fn) + '</span><div class="code-file-actions"><button class="code-file-btn" onclick="event.stopPropagation();copyCode(\'' + id + '\',this)">COPY</button><button class="code-file-btn" onclick="event.stopPropagation();downloadCode(\'' + id + '\')">DOWNLOAD</button></div></div><div class="wiring-expand"><pre class="wiring-block" id="' + id + '">' + e + '</pre></div></div>';
+      if (codeLang === 'wiregen') {
+        // Streaming: wiregen block not yet closed — show loading placeholder
+        html += '<div class="wiregen-loading">Building wiring diagram...</div>';
+      } else {
+        const e = highlightArduino(code.trimEnd()), id = 'c-' + Math.random().toString(36).slice(2, 8), fn = guessFile(code, sec);
+        html += '<div class="code-wrap" id="wrap-' + id + '"><div class="code-file-bar" onclick="toggleCode(\'' + id + '\')"><span class="file-arrow">&#9654;</span><span class="file-name">' + esc(fn) + '</span><div class="code-file-actions"><button class="code-file-btn" onclick="event.stopPropagation();copyCode(\'' + id + '\',this)">COPY</button><button class="code-file-btn" onclick="event.stopPropagation();downloadCode(\'' + id + '\')">DOWNLOAD</button></div></div><div class="wiring-expand"><pre class="wiring-block" id="' + id + '">' + e + '</pre></div></div>';
+      }
     }
     cl(); return html;
   }
@@ -391,6 +413,27 @@
   function shopAllOnAmazon() {
     if (!lastPartsForAmazon.length) return;
     lastPartsForAmazon.forEach(p => { window.open('https://www.amazon.com/s?k=' + encodeURIComponent(p), '_blank', 'noopener,noreferrer'); });
+  }
+
+  function destroyWiregenInstances() {
+    _wiregenInstances.forEach(inst => { try { unmount(inst); } catch {} });
+    _wiregenInstances = [];
+  }
+
+  function mountWiregenDiagrams() {
+    if (!buildOutput) return;
+    const mounts = buildOutput.querySelectorAll('.wiregen-mount');
+    mounts.forEach(el => {
+      if (el.dataset.mounted) return;
+      el.dataset.mounted = '1';
+      try {
+        const diagram = JSON.parse(el.dataset.diagram);
+        const inst = mount(WiringCanvas, { target: el, props: { diagram } });
+        _wiregenInstances.push(inst);
+      } catch (err) {
+        el.innerHTML = '<p style="color:var(--hi);font-size:12px;">Diagram error: ' + esc(err.message) + '</p>';
+      }
+    });
   }
 
   /* ── Generate state ── */
@@ -410,26 +453,126 @@
     }
   }
 
-  /* ── Core send ── */
-  async function send(text) {
-    if (generating) { if (controller) controller.abort(); return; }
-    if (!text) return;
+  /* ── Clarify flow ── */
+  function formatClarifications(answers) {
+    const labels = { board: 'Board', components: 'Available parts', complexity: 'Project complexity', comments: 'Code comments', power: 'Power source', purpose: 'Project purpose' };
+    const lines = Object.entries(answers).filter(([, v]) => v).map(([k, v]) => `- ${labels[k] || k}: ${v}`);
+    return lines.length ? 'Additional context from user:\n' + lines.join('\n') : null;
+  }
 
-    dismissHero();
-    heroInput.value = ''; chatInput.value = ''; charCount.textContent = '0/300';
-    outputContext.textContent = '';
+  function closeClarifyOverlay() {
+    gid('clarifyBg').classList.remove('open');
+  }
 
-    addMsg(text, 'user');
-    emptyState.classList.add('hidden');
-    workspace.classList.remove('no-build');
+  function finishClarify() {
+    const q = clarifyQuestions[clarifyIdx];
+    if (q) {
+      const inp = gid('clarifyInner').querySelector('.clarify-text-input');
+      if (inp) clarifyAnswers[q.id] = inp.value.trim();
+    }
+    closeClarifyOverlay();
+    try { localStorage.setItem('mrt-last-clarify', JSON.stringify(clarifyAnswers)); } catch {}
+    const clarifications = formatClarifications(clarifyAnswers);
+    addMsg('Got it! Building your project now...', 'bot');
+    _doGenerate(clarifyOriginalPrompt, clarifications);
+  }
+
+  function skipClarify() {
+    closeClarifyOverlay();
+    addMsg('On it — building right away.', 'bot');
+    _doGenerate(clarifyOriginalPrompt, null);
+  }
+
+  function advanceClarify() {
+    const q = clarifyQuestions[clarifyIdx];
+    if (!q) { finishClarify(); return; }
+    const inp = gid('clarifyInner').querySelector('.clarify-text-input');
+    if (inp) clarifyAnswers[q.id] = inp.value.trim();
+    if (clarifyIdx < clarifyQuestions.length - 1) {
+      renderClarifyQuestion(clarifyIdx + 1);
+    } else {
+      finishClarify();
+    }
+  }
+
+  function renderClarifyQuestion(idx) {
+    clarifyIdx = idx;
+    const q = clarifyQuestions[idx];
+    if (!q) return;
+    const total = clarifyQuestions.length;
+    const prev = clarifyAnswers[q.id] || '';
+    let prevAnswers = {};
+    try { prevAnswers = JSON.parse(localStorage.getItem('mrt-last-clarify') || '{}'); } catch {}
+    const preselect = prev || prevAnswers[q.id] || '';
+
+    const dots = Array.from({ length: total }, (_, i) =>
+      `<span class="clarify-dot${i < idx ? ' done' : i === idx ? ' cur' : ''}"></span>`
+    ).join('');
+
+    // All questions get a text input. Choice/toggle also show chips that populate it.
+    const chipHtml = (q.type === 'choice' || q.type === 'toggle')
+      ? `<div class="clarify-chips">${q.options.map(opt =>
+          `<button type="button" class="clarify-chip${preselect === opt ? ' active' : ''}" data-val="${esc(opt)}">${esc(opt)}</button>`
+        ).join('')}</div>`
+      : '';
+    const inputHtml = `${chipHtml}<input class="clarify-text-input" type="text" placeholder="${esc(q.hint || 'or type your own...')}" value="${esc(preselect)}" maxlength="200" autocomplete="off" spellcheck="false"/>`;
+
+    const isLast = idx === total - 1;
+    gid('clarifyInner').innerHTML = `
+      <div class="clarify-progress">${dots}</div>
+      <div class="clarify-question">${esc(q.question)}</div>
+      ${inputHtml}
+      <div class="clarify-nav">
+        ${idx > 0 ? `<button type="button" class="clarify-back" id="clarifyBack">&lt; BACK</button>` : `<span></span>`}
+        <button type="button" class="clarify-next" id="clarifyNext">${isLast ? 'BUILD &gt;&gt;' : 'NEXT &gt;'}</button>
+      </div>
+    `;
+
+    const textInput = gid('clarifyInner').querySelector('.clarify-text-input');
+
+    if (q.type === 'choice' || q.type === 'toggle') {
+      gid('clarifyInner').querySelectorAll('.clarify-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+          gid('clarifyInner').querySelectorAll('.clarify-chip').forEach(b => b.classList.toggle('active', b === btn));
+          if (textInput) { textInput.value = btn.dataset.val; textInput.focus(); }
+        });
+      });
+      // Typing in the input deselects chips
+      if (textInput) {
+        textInput.addEventListener('input', () => {
+          gid('clarifyInner').querySelectorAll('.clarify-chip').forEach(b => b.classList.remove('active'));
+        });
+      }
+    }
+
+    const nextBtn = gid('clarifyNext');
+    if (nextBtn) nextBtn.addEventListener('click', advanceClarify);
+    const backBtn = gid('clarifyBack');
+    if (backBtn) backBtn.addEventListener('click', () => { renderClarifyQuestion(idx - 1); });
+
+    if (textInput) {
+      textInput.focus();
+      textInput.addEventListener('keydown', e => { if (e.key === 'Enter') advanceClarify(); });
+    } else if (nextBtn) {
+      nextBtn.focus();
+    }
+  }
+
+  function showClarifyOverlay() {
+    gid('clarifyBg').classList.add('open');
+    renderClarifyQuestion(0);
+  }
+
+  /* ── Core generate (no UI setup — called after UI is ready) ── */
+  async function _doGenerate(text, clarifications) {
+    buildOutput.classList.add('active');
+    buildOutput.innerHTML = '';
+    buildOutput.classList.add('streaming-cursor');
     requestAnimationFrame(() => {
       const op = workspace.querySelector('.output');
       op.classList.add('output-entering');
       op.addEventListener('animationend', () => op.classList.remove('output-entering'), { once: true });
     });
-    buildOutput.classList.add('active');
-    buildOutput.innerHTML = '';
-    buildOutput.classList.add('streaming-cursor');
     const thinkEl = addThinkingMsg();
     setGenerating(true);
 
@@ -459,7 +602,7 @@
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: apiPrompt, skill: getSkill(), age: getAge() }),
+        body: JSON.stringify({ prompt: apiPrompt, skill: getSkill(), age: getAge(), clarifications }),
         signal: controller.signal
       });
       if (!res.ok) {
@@ -482,7 +625,9 @@
       }
       if (buf.trim()) { const p = parseLine(buf); if (p) { if (p.error) err2 = p.error; else if (p.t) { accumulated += p.t; } } }
       stopTyping(); displayed = accumulated.length;
+      destroyWiregenInstances();
       buildOutput.innerHTML = renderMd(accumulated); scrollOut();
+      mountWiregenDiagrams();
       buildOutput.classList.remove('streaming-cursor');
       if (thinkShown) { thinkEl.remove(); thinkShown = false; }
 
@@ -518,10 +663,60 @@
         const ep = document.createElement('p'); ep.style.color = 'var(--hi)'; ep.style.marginTop = accumulated ? '16px' : '0'; ep.textContent = friendly;
         buildOutput.appendChild(ep);
         const rb = document.createElement('button'); rb.className = 'retry-btn'; rb.textContent = 'Retry';
-        rb.addEventListener('click', () => { send(text); });
+        rb.addEventListener('click', () => { send(text, null); });
         buildOutput.appendChild(rb);
       }
     } finally { setGenerating(false); controller = null; updateHistChat(); }
+  }
+
+  /* ── Send (handles clarify intercept then delegates to _doGenerate) ── */
+  async function send(text, clarifications = undefined) {
+    if (generating) { if (controller) controller.abort(); return; }
+    if (!text) return;
+
+    // ── CLARIFY INTERCEPT: fresh builds only, when clarifications not yet decided ──
+    if (clarifications === undefined && !lastGuide && text.length >= 10) {
+      dismissHero();
+      heroInput.value = ''; chatInput.value = ''; charCount.textContent = '0/300';
+      outputContext.textContent = '';
+      addMsg(text, 'user');
+      emptyState.classList.add('hidden');
+      workspace.classList.remove('no-build');
+      const thinkElC = addThinkingMsg();
+      let questions = [];
+      try {
+        const ac = new AbortController();
+        const tid = setTimeout(() => ac.abort(), 4000);
+        const r = await fetch('/api/clarify', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: text }), signal: ac.signal
+        });
+        clearTimeout(tid);
+        if (r.ok) { const d = await r.json(); questions = d.questions || []; }
+      } catch { /* timeout or network error — proceed without clarify */ }
+      thinkElC.remove();
+      if (questions.length > 0) {
+        clarifyOriginalPrompt = text;
+        clarifyQuestions = questions;
+        clarifyAnswers = {};
+        clarifyIdx = 0;
+        showClarifyOverlay();
+        return;
+      }
+      // No questions needed — generate directly
+      await _doGenerate(text, null);
+      return;
+    }
+
+    // ── REGULAR PATH (edit, retry, short prompt, or post-clarify) ──
+    dismissHero();
+    heroInput.value = ''; chatInput.value = ''; charCount.textContent = '0/300';
+    outputContext.textContent = '';
+    addMsg(text, 'user');
+    emptyState.classList.add('hidden');
+    workspace.classList.remove('no-build');
+
+    await _doGenerate(text, typeof clarifications === 'string' ? clarifications : null);
   }
 
   /* ── Simulate ── */
@@ -673,10 +868,16 @@
     modalCloseBtn.addEventListener('click', closeSettings);
     modalBg.addEventListener('click', e => { if (e.target === modalBg) closeSettings(); });
 
+    /* Clarify overlay */
+    gid('clarifySkip').addEventListener('click', skipClarify);
+    gid('clarifyBg').addEventListener('click', e => { if (e.target === gid('clarifyBg')) skipClarify(); });
+    gid('clarifyBg').addEventListener('keydown', e => { if (e.key === 'Tab') trapFocus(gid('clarifyBg').querySelector('.clarify-card'), e); });
+
     /* Keyboard shortcuts */
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
         if (modalBg.classList.contains('open')) { closeSettings(); return; }
+        if (gid('clarifyBg').classList.contains('open')) { skipClarify(); return; }
         if (histPanel.classList.contains('open')) { histPanel.classList.remove('open'); return; }
         if (generating && controller) { controller.abort(); return; }
       }
@@ -876,5 +1077,16 @@
       <div class="modal-slider-row"><input class="modal-slider" id="fontSlider" type="range" min="80" max="200" step="10" value="100"/><span class="modal-val" id="fontVal">100%</span></div>
     </div>
     <button type="button" class="modal-close-btn" id="modalCloseBtn">CLOSE</button>
+  </div>
+</div>
+
+<!-- ═══ CLARIFY OVERLAY ═══ -->
+<div class="clarify-bg" id="clarifyBg">
+  <div class="clarify-card" role="dialog" aria-modal="true" aria-label="A few quick questions">
+    <div class="clarify-header">
+      <div class="clarify-title">ONE SEC</div>
+      <button type="button" class="clarify-skip" id="clarifySkip">SKIP &gt;&gt; BUILD NOW</button>
+    </div>
+    <div class="clarify-inner" id="clarifyInner"></div>
   </div>
 </div>
