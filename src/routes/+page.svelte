@@ -77,6 +77,10 @@
   }
 
   /* ── History ── */
+  function getProjectName(item) {
+    if (item.guide) { const m = item.guide.match(/^# (.+)$/m); if (m) return m[1].trim(); }
+    return item.prompt;
+  }
   function getHist() { try { return JSON.parse(localStorage.getItem('mrt-history') || '[]'); } catch { return []; } }
   function saveHist(h) { localStorage.setItem('mrt-history', JSON.stringify(h.slice(0, 20))); }
   function addHist(prompt, skill, guide) {
@@ -137,7 +141,8 @@
     URL.revokeObjectURL(a.href);
   }
   function downloadGuide(guide, prompt) {
-    downloadBlob(guide, (prompt.slice(0, 40).replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'project') + '.md', 'text/markdown');
+    const name = getProjectName({ guide, prompt });
+    downloadBlob(guide, (name.slice(0, 40).replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'project') + '.md', 'text/markdown');
   }
 
   function showDeleteConfirm(prompt, guide, onDelete, noDownload) {
@@ -211,7 +216,7 @@
       el.tabIndex = 0; el.setAttribute('role', 'button'); el.dataset.ts = item.ts;
       if (selectedTs.has(item.ts)) el.classList.add('selected');
       const d = new Date(item.ts), ts = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><div class="hist-item-body"><div class="hist-item-prompt">${esc(item.prompt)}</div><div class="hist-item-meta">${esc(item.skill)} &middot; ${esc(ts)}</div></div><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
+      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><div class="hist-item-body"><div class="hist-item-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</div><div class="hist-item-meta">${esc(item.skill)} &middot; ${esc(ts)}</div></div><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
       const go = () => {
         if (selectedTs.size > 0) { toggleSelect(item.ts); return; }
         histPanel.classList.remove('open');
@@ -222,7 +227,7 @@
       el.querySelector('.item-cb').addEventListener('click', e => { e.stopPropagation(); toggleSelect(item.ts); });
       el.querySelector('.item-del').addEventListener('click', e => {
         e.stopPropagation();
-        showDeleteConfirm(item.prompt, item.guide, () => deleteFromHist(item.ts, el));
+        showDeleteConfirm(getProjectName(item), item.guide, () => deleteFromHist(item.ts, el));
       });
       histList.appendChild(el);
     });
@@ -243,7 +248,7 @@
       el.tabIndex = 0; el.setAttribute('role', 'button'); el.dataset.ts = item.ts;
       if (selectedTs.has(item.ts)) el.classList.add('selected');
       const ago = timeAgo(item.ts);
-      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><span class="hero-recent-prompt">${esc(item.prompt)}</span><span class="hero-recent-meta">${esc(ago)}</span><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
+      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><span class="hero-recent-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</span><span class="hero-recent-meta">${esc(ago)}</span><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
       const go = () => {
         if (selectedTs.size > 0) { toggleSelect(item.ts); return; }
         if (restoreProject(item)) { dismissHero(); } else { heroInput.value = item.prompt; send(item.prompt, null); }
@@ -253,7 +258,7 @@
       el.querySelector('.item-cb').addEventListener('click', e => { e.stopPropagation(); toggleSelect(item.ts); });
       el.querySelector('.item-del').addEventListener('click', e => {
         e.stopPropagation();
-        showDeleteConfirm(item.prompt, item.guide, () => deleteFromHist(item.ts, el));
+        showDeleteConfirm(getProjectName(item), item.guide, () => deleteFromHist(item.ts, el));
       });
       heroRecent.appendChild(el);
     });
@@ -872,7 +877,7 @@
       navigator.clipboard.writeText(text).then(() => { const b = gid('btnExport'); b.classList.add('active'); setTimeout(() => b.classList.remove('active'), 1200); }).catch(() => { addMsg('Copy failed — check browser permissions', 'bot'); });
     });
     gid('btnSettings').addEventListener('click', () => { _settingsTrigger = document.activeElement; openSettings(); });
-    gid('btnDelete').addEventListener('click', () => { if (!lastGuide) return; showDeleteConfirm(lastPrompt, lastGuide, () => deleteFromHist(lastTs, null)); });
+    gid('btnDelete').addEventListener('click', () => { if (!lastGuide) return; showDeleteConfirm(getProjectName({ guide: lastGuide, prompt: lastPrompt }), lastGuide, () => deleteFromHist(lastTs, null)); });
 
     /* Delete modal */
     gid('delModalDownload').addEventListener('click', () => { if (_del.guide && _del.prompt) downloadGuide(_del.guide, _del.prompt); });
