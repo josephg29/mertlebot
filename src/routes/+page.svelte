@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import WiringCanvas from '$lib/wiregen/WiringCanvas.svelte';
+  import HeroBackground from '$lib/HeroBackground.svelte';
   import { mount, unmount } from 'svelte';
 
   /* ── Shared SVG icons ── */
@@ -961,6 +962,7 @@
 
 <!-- ═══ HERO ═══ -->
 <div class="hero" id="hero">
+  <HeroBackground />
   <div class="hero-card">
     <div class="hero-title">mertle.bot</div>
     <div class="hero-tag">describe it. build it.</div>

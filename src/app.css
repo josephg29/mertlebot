@@ -1116,7 +1116,7 @@ strong { color: var(--primary); }
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(15, 20, 30, 0.93);
+  background: rgb(15, 20, 30);
   overflow: hidden;
 }
 
