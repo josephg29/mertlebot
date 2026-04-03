@@ -2,12 +2,69 @@ import Anthropic from '@anthropic-ai/sdk';
 import { json } from '@sveltejs/kit';
 import { getApiKey } from '$lib/server/config.js';
 import { SYSTEM, SKILL_CONTEXT, CHAT_SYSTEM, ageContext } from '$lib/server/prompts.js';
+import { repairGuide, summarizeSupport } from '$lib/projectSupport.js';
 
 function isAbortError(err) {
   return err?.constructor?.name === 'APIUserAbortError'
     || err?.name === 'APIUserAbortError'
     || err?.message?.includes('Request was aborted')
     || err?.name === 'AbortError';
+}
+
+async function withTimeout(promise, ms) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Generation attempt timed out after ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function requestGuide(client, system, userContent, model = 'claude-sonnet-4-6') {
+  const msg = await withTimeout(client.messages.create({
+    model,
+    max_tokens: 4096,
+    system,
+    messages: [{ role: 'user', content: userContent }],
+  }), model === 'claude-sonnet-4-6' ? 35000 : 20000);
+  return msg.content?.[0]?.text || '';
+}
+
+async function generateValidatedGuide(client, system, prompt, userContent) {
+  const maxAttempts = 2;
+  let draft = '';
+  let validation = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const repairContext = attempt === 1
+      ? userContent
+      : [
+          `Original project request: ${prompt}`,
+          '',
+          'Your previous draft failed validation. Rewrite the FULL guide from scratch and fix every issue below.',
+          '',
+          'Validation issues:',
+          ...(validation?.issues || []).map((issue) => `- ${issue}`),
+          '',
+          'Previous invalid draft:',
+          draft,
+        ].join('\n');
+
+    const model = attempt === 1 ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001';
+    draft = await requestGuide(client, system, repairContext, model);
+    draft = repairGuide(draft);
+    validation = summarizeSupport(draft);
+    if (validation.ok) {
+      return { text: draft, attempts: attempt, validation };
+    }
+  }
+
+  throw new Error(`Generated guide failed validation after ${maxAttempts} attempts: ${validation?.issues.join(' ')}`);
 }
 
 async function classifyIntent(client, prompt) {
@@ -64,55 +121,37 @@ export async function POST({ request }) {
 
   const userContent = (intent === 'BUILD' && clarifications) ? `${prompt}\n\n${clarifications}` : prompt;
 
-  const msgStream = client.messages.stream({
-    model: 'claude-sonnet-4-6',
-    max_tokens: intent === 'BUILD' ? 4096 : 1024,
-    system: fullSystem,
-    messages: [{ role: 'user', content: userContent }],
-  });
-
   const enc = new TextEncoder();
 
   const stream = new ReadableStream({
-    start(controller) {
+    async start(controller) {
       // Send intent hint first so the client knows BUILD vs CHAT
       controller.enqueue(enc.encode(`data: ${JSON.stringify({ intent })}\n\n`));
+      try {
+        const text = intent === 'BUILD'
+          ? (await generateValidatedGuide(client, fullSystem, prompt, userContent)).text
+          : await requestGuide(client, fullSystem, userContent);
 
-      let chunks = 0;
-
-      msgStream.on('text', (text) => {
-        chunks++;
-        try {
-          controller.enqueue(enc.encode(`data: ${JSON.stringify({ t: text })}\n\n`));
-        } catch { /* controller closed */ }
-      });
-
-      msgStream.on('end', () => {
-        console.log(`Stream ended — ${chunks} text chunks sent`);
-        try {
-          controller.enqueue(enc.encode('data: [DONE]\n\n'));
-          controller.close();
-        } catch { /* already closed */ }
-      });
-
-      msgStream.on('error', (err) => {
+        for (let i = 0; i < text.length; i += 160) {
+          const chunk = text.slice(i, i + 160);
+          controller.enqueue(enc.encode(`data: ${JSON.stringify({ t: chunk })}\n\n`));
+        }
+        controller.enqueue(enc.encode('data: [DONE]\n\n'));
+        controller.close();
+      } catch (err) {
         if (isAbortError(err)) {
-          console.log('Stream aborted (client disconnect)');
-          try { controller.close(); } catch { /* already closed */ }
+          console.log('Generation aborted');
+          try { controller.close(); } catch {}
           return;
         }
-        console.error('Stream error:', err.constructor?.name, err.message);
+        console.error('Generate error:', err.constructor?.name, err.message);
         try {
           controller.enqueue(enc.encode(`data: ${JSON.stringify({ error: err.message })}\n\n`));
           controller.enqueue(enc.encode('data: [DONE]\n\n'));
           controller.close();
-        } catch { /* already closed */ }
-      });
+        } catch {}
+      }
     },
-    cancel() {
-      console.log('Client disconnected — aborting Anthropic stream');
-      try { msgStream.abort(); } catch { /* ignore */ }
-    }
   });
 
   return new Response(stream, {

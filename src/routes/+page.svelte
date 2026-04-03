@@ -1,11 +1,14 @@
 <script>
   import { onMount } from 'svelte';
   import WiringCanvas from '$lib/wiregen/WiringCanvas.svelte';
+  import InstructionBook from '$lib/InstructionBook.svelte';
   import { mount, unmount } from 'svelte';
+  import { extractStepGroups, stripMarkdown, summarizeSupport, validateDiagram } from '$lib/projectSupport.js';
 
   /* ── Shared SVG icons ── */
   const ICON_TRASH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2 0 0,1-2,2H8a2,2 0 0,1-2-2L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4a1,1 0 0,1,1-1h4a1,1 0 0,1,1,1v2"/></svg>';
   const ICON_CHECK = '<svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1,5 4,8 9,2"/></svg>';
+  const ICON_DOWNLOAD = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="M21,15v4a2,2 0 0,1-2,2H5a2,2 0 0,1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 
   /* ── Step instruction-book icons (pixel-art style) ── */
   const STEP_ICONS = {
@@ -41,6 +44,36 @@
       histPanel, histList, histClose,
       chatPane, chatToggle, workspace;
 
+  /* ── Cloud project ideas ── */
+  const PROJECT_IDEAS = [
+    'smart plant watering system',
+    'bluetooth LED mood lamp',
+    'RFID door lock',
+    'weather station with e-ink display',
+    'gesture-controlled robot arm',
+    'solar-powered IoT sensor',
+    'retro LED matrix clock',
+    'voice-activated light switch',
+    'DIY oscilloscope',
+    'automated pet feeder',
+    'capacitive touch piano',
+    'GPS tracker with SMS alerts',
+    'self-balancing robot',
+    'ultrasonic parking sensor',
+    'wireless temperature monitor',
+    'MIDI controller with arcade buttons',
+    'laser harp',
+    'wearable step counter',
+    'soil moisture dashboard',
+    'programmable RGB LED cube',
+  ];
+  let cloudProps = [];
+  function rotateCloudIdea(i) {
+    const next = PROJECT_IDEAS.filter(p => p !== cloudProps[i].idea)[Math.floor(Math.random() * (PROJECT_IDEAS.length - 1))];
+    cloudProps[i] = { ...cloudProps[i], idea: next };
+    cloudProps = cloudProps;
+  }
+
   /* ── State ── */
   let controller = null, generating = false, lastPrompt = '', lastGuide = '',
       lastSkill = '', lastTs = null, lastPartsForAmazon = [];
@@ -49,6 +82,7 @@
   let _del = { cb: null, guide: null, prompt: null };
   let _settingsTrigger = null;
   let _wiregenInstances = [];
+  let _instructionBookInstances = [];
 
   /* ── Clarify state ── */
   let clarifyQuestions = [], clarifyAnswers = {}, clarifyIdx = 0, clarifyOriginalPrompt = '';
@@ -67,6 +101,7 @@
     gid('clarifyBg') && gid('clarifyBg').classList.remove('open');
     clarifyQuestions = []; clarifyAnswers = {}; clarifyOriginalPrompt = '';
     destroyWiregenInstances();
+    destroyInstructionBookInstances();
     buildOutput.classList.remove('active'); buildOutput.innerHTML = '';
     emptyState.classList.remove('hidden'); outputContext.textContent = '';
     lastPrompt = ''; lastGuide = ''; lastSkill = ''; lastTs = null;
@@ -113,13 +148,16 @@
   }
   function restoreProject(item) {
     if (!item.guide) return false;
+    const support = summarizeSupport(item.guide);
     lastPrompt = item.prompt; lastGuide = item.guide; lastSkill = item.skill; lastTs = item.ts;
     chatLog.innerHTML = item.chat || INIT_MSG;
     emptyState.classList.add('hidden');
     destroyWiregenInstances();
+    destroyInstructionBookInstances();
     buildOutput.classList.add('active'); buildOutput.classList.remove('streaming-cursor');
     buildOutput.innerHTML = renderMd(item.guide);
     mountWiregenDiagrams();
+    mountInstructionBooks();
     workspace.classList.remove('no-build');
     requestAnimationFrame(() => {
       const op = workspace.querySelector('.output');
@@ -129,7 +167,8 @@
     outputContext.textContent = '';
     chatInput.value = ''; charCount.textContent = '0/300';
     gid('btnDelete').style.display = '';
-    addSimBtn(); scrollOut();
+    if (support.canSimulate) addSimBtn();
+    scrollOut();
     return true;
   }
 
@@ -143,6 +182,188 @@
   function downloadGuide(guide, prompt) {
     const name = getProjectName({ guide, prompt });
     downloadBlob(guide, (name.slice(0, 40).replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'project') + '.md', 'text/markdown');
+  }
+
+  /* ── Folder / zip download ── */
+  function parseStepsFromGuide(guide) {
+    return extractStepGroups(guide).map((step) => ({
+      ...step,
+      action: classifyAction(step.text),
+    }));
+  }
+
+  async function captureWiregenSvg(diagram) {
+    const container = document.createElement('div');
+    container.style.cssText = 'position:fixed;left:-9999px;top:0;width:960px;height:640px;visibility:hidden;';
+    document.body.appendChild(container);
+    let inst;
+    try {
+      inst = mount(WiringCanvas, { target: container, props: { diagram, compact: false } });
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const svgEl = container.querySelector('.wiregen-diagram');
+      if (!svgEl) return null;
+      const clone = svgEl.cloneNode(true);
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      clone.removeAttribute('style');
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('width', '960'); bg.setAttribute('height', '640'); bg.setAttribute('fill', '#1A2529');
+      clone.insertBefore(bg, clone.firstChild);
+      return '<?xml version="1.0" encoding="utf-8"?>' + new XMLSerializer().serializeToString(clone);
+    } catch (e) {
+      console.error('wiregen SVG capture failed', e); return null;
+    } finally {
+      if (inst) try { unmount(inst); } catch {}
+      document.body.removeChild(container);
+    }
+  }
+
+  function wrapTextLines(ctx, text, maxW) {
+    const words = text.split(' ');
+    const lines = []; let line = '';
+    for (const word of words) {
+      const test = line ? line + ' ' + word : word;
+      if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = word; } else line = test;
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  function buildProjectHtml(name, guide, diagramCount, steps) {
+    const safeName = esc(name);
+    const safeGuide = esc(guide);
+    const diagramHtml = diagramCount
+      ? Array.from({ length: diagramCount }, (_, i) => {
+          const suffix = diagramCount > 1 ? '-' + (i + 1) : '';
+          return `<figure><img src="images/wiring-diagram${suffix}.svg" alt="Wiring diagram ${i + 1}"><figcaption>Wiring diagram ${i + 1}</figcaption></figure>`;
+        }).join('')
+      : '<p>No wiring diagram is included for this project.</p>';
+    const stepHtml = steps.length
+      ? steps.map((step, i) => `<figure><img src="steps/step-${String(i + 1).padStart(2, '0')}.png" alt="Step ${step.num}"><figcaption>Step ${step.num}: ${esc(step.text)}</figcaption></figure>`).join('')
+      : '<p>No step cards were generated.</p>';
+
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${safeName}</title>
+  <style>
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; background: #0f171a; color: #e7ecef; }
+    main { max-width: 960px; margin: 0 auto; padding: 32px 20px 48px; }
+    h1, h2 { margin: 0 0 16px; }
+    section { margin-top: 32px; }
+    pre { white-space: pre-wrap; background: #162227; padding: 16px; border: 1px solid #29424a; border-radius: 8px; overflow: auto; }
+    figure { margin: 0 0 20px; }
+    img { max-width: 100%; height: auto; display: block; background: #fff; border-radius: 8px; }
+    figcaption { margin-top: 8px; color: #9fb2bb; font-size: 14px; }
+    a { color: #8ad3ff; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${safeName}</h1>
+    <p><a href="guide.md">Open raw guide.md</a></p>
+    <section>
+      <h2>Guide</h2>
+      <pre>${safeGuide}</pre>
+    </section>
+    <section>
+      <h2>Wiring Diagrams</h2>
+      ${diagramHtml}
+    </section>
+    <section>
+      <h2>Step Cards</h2>
+      ${stepHtml}
+    </section>
+  </main>
+</body>
+</html>`;
+  }
+
+  const STEP_EXPORT_COLORS = {
+    wire:     { accent: '#29B6F6', dark: '#0277BD', label: 'WIRE' },
+    code:     { accent: '#4CAF50', dark: '#388E3C', label: 'CODE' },
+    power:    { accent: '#FFD54F', dark: '#F9A825', label: 'POWER' },
+    test:     { accent: '#00BCD4', dark: '#007C91', label: 'TEST' },
+    assemble: { accent: '#FF7043', dark: '#BF360C', label: 'BUILD' },
+    default:  { accent: '#90A4AE', dark: '#546E7A', label: 'STEP' },
+  };
+
+  function renderStepImage(step, current, total) {
+    const W = 800, H = 280;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    const col = STEP_EXPORT_COLORS[step.action] || STEP_EXPORT_COLORS.default;
+    // Background
+    ctx.fillStyle = '#FAFAFA'; ctx.fillRect(0, 0, W, H);
+    // Top strip
+    ctx.fillStyle = col.accent; ctx.fillRect(0, 0, W, 10);
+    // Left border
+    ctx.fillStyle = col.accent; ctx.fillRect(0, 0, 3, H);
+    // Step badge
+    ctx.fillStyle = col.accent; ctx.fillRect(0, 0, 58, 58);
+    ctx.fillStyle = col.dark; ctx.fillRect(4, 54, 58, 4);
+    ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 18px monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(step.num, 29, 30);
+    // Counter
+    ctx.fillStyle = '#888888'; ctx.font = '10px monospace';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+    ctx.fillText(current + ' / ' + total, W - 14, 16);
+    // Action badge
+    ctx.font = 'bold 10px monospace';
+    const bw = ctx.measureText(col.label).width + 24;
+    ctx.fillStyle = col.accent; ctx.fillRect(W / 2 - bw / 2, 72, bw, 22);
+    ctx.fillStyle = col.dark; ctx.fillRect(W / 2 - bw / 2 + 2, 92, bw, 3);
+    ctx.fillStyle = '#1a1a1a'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(col.label, W / 2, 83);
+    // Step text
+    ctx.fillStyle = '#1a1a1a'; ctx.font = '14px monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    wrapTextLines(ctx, stripMarkdown(step.text), W - 100).forEach((ln, i) => ctx.fillText(ln, W / 2, 110 + i * 22));
+    return new Promise(res => canvas.toBlob(b => res(b), 'image/png'));
+  }
+
+  async function downloadProjectFolder(guide, prompt) {
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+    const support = summarizeSupport(guide);
+    const name = getProjectName({ guide, prompt });
+    const slug = name.slice(0, 40).replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'project';
+    zip.file('guide.md', guide);
+    // Extract wiregen diagrams from markdown
+    const wiregenRegex = /```wiregen\r?\n([\s\S]*?)```/g;
+    let wm; const diagrams = [];
+    while ((wm = wiregenRegex.exec(guide)) !== null) {
+      try { diagrams.push(JSON.parse(wm[1].trim())); } catch {}
+    }
+    const imgFolder = zip.folder('images');
+    for (let i = 0; i < diagrams.length; i++) {
+      const svgStr = await captureWiregenSvg(diagrams[i]);
+      if (svgStr) {
+        const sfx = diagrams.length > 1 ? '-' + (i + 1) : '';
+        imgFolder.file('wiring-diagram' + sfx + '.svg', svgStr);
+      }
+    }
+    // Generate step images
+    const steps = parseStepsFromGuide(guide);
+    if (steps.length) {
+      const stepsFolder = zip.folder('steps');
+      for (let i = 0; i < steps.length; i++) {
+        const blob = await renderStepImage(steps[i], i + 1, steps.length);
+        if (blob) stepsFolder.file('step-' + String(i + 1).padStart(2, '0') + '.png', blob);
+      }
+    }
+    zip.file('support.json', JSON.stringify({
+      supportedDiagram: support.supportedDiagram,
+      safeTextOnly: support.safeTextOnly,
+      canSimulate: support.canSimulate,
+      issues: support.issues,
+    }, null, 2));
+    zip.file('index.html', buildProjectHtml(name, guide, diagrams.length, steps));
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(zipBlob, slug + '.zip', 'application/zip');
   }
 
   function showDeleteConfirm(prompt, guide, onDelete, noDownload) {
@@ -216,7 +437,7 @@
       el.tabIndex = 0; el.setAttribute('role', 'button'); el.dataset.ts = item.ts;
       if (selectedTs.has(item.ts)) el.classList.add('selected');
       const d = new Date(item.ts), ts = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><div class="hist-item-body"><div class="hist-item-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</div><div class="hist-item-meta">${esc(item.skill)} &middot; ${esc(ts)}</div></div><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
+      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><div class="hist-item-body"><div class="hist-item-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</div><div class="hist-item-meta">${esc(item.skill)} &middot; ${esc(ts)}</div></div><button class="item-dl" title="Download" aria-label="Download project" tabindex="-1">${ICON_DOWNLOAD}</button><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
       const go = () => {
         if (selectedTs.size > 0) { toggleSelect(item.ts); return; }
         histPanel.classList.remove('open');
@@ -225,6 +446,7 @@
       el.addEventListener('click', go);
       el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
       el.querySelector('.item-cb').addEventListener('click', e => { e.stopPropagation(); toggleSelect(item.ts); });
+      el.querySelector('.item-dl').addEventListener('click', e => { e.stopPropagation(); if (item.guide) downloadProjectFolder(item.guide, item.prompt); });
       el.querySelector('.item-del').addEventListener('click', e => {
         e.stopPropagation();
         showDeleteConfirm(getProjectName(item), item.guide, () => deleteFromHist(item.ts, el));
@@ -248,7 +470,7 @@
       el.tabIndex = 0; el.setAttribute('role', 'button'); el.dataset.ts = item.ts;
       if (selectedTs.has(item.ts)) el.classList.add('selected');
       const ago = timeAgo(item.ts);
-      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><span class="hero-recent-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</span><span class="hero-recent-meta">${esc(ago)}</span><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
+      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><span class="hero-recent-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</span><span class="hero-recent-meta">${esc(ago)}</span><button class="item-dl" title="Download" aria-label="Download project" tabindex="-1">${ICON_DOWNLOAD}</button><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
       const go = () => {
         if (selectedTs.size > 0) { toggleSelect(item.ts); return; }
         if (restoreProject(item)) { dismissHero(); } else { heroInput.value = item.prompt; send(item.prompt, null); }
@@ -256,6 +478,7 @@
       el.addEventListener('click', go);
       el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
       el.querySelector('.item-cb').addEventListener('click', e => { e.stopPropagation(); toggleSelect(item.ts); });
+      el.querySelector('.item-dl').addEventListener('click', e => { e.stopPropagation(); if (item.guide) downloadProjectFolder(item.guide, item.prompt); });
       el.querySelector('.item-del').addEventListener('click', e => {
         e.stopPropagation();
         showDeleteConfirm(getProjectName(item), item.guide, () => deleteFromHist(item.ts, el));
@@ -375,6 +598,7 @@
   function renderMd(raw) {
     let html = ''; const lines = raw.split('\n'); let inCode = false, codeLang = '', code = '', inUl = false, inOl = false, sec = '';
     let partsInSection = [];
+    let stepBuffer = [], lastDiagramJson = '';
     function cl() {
       if (inUl) {
         if (/^PARTS$/i.test(sec) && partsInSection.length) {
@@ -383,7 +607,19 @@
         } else { html += '</ul>'; }
         inUl = false;
       }
-      if (inOl) { html += '</div>'; inOl = false; }
+      if (inOl) {
+        if (stepBuffer.length) {
+          const stepsJson = JSON.stringify(stepBuffer)
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+          const diagJson = lastDiagramJson
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+          html += '<div class="instruction-book-mount" data-steps="' + stepsJson + '" data-diagram="' + diagJson + '"></div>';
+          stepBuffer = [];
+        } else {
+          html += '</div>';
+        }
+        inOl = false;
+      }
     }
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -391,6 +627,7 @@
         if (inCode) {
           if (codeLang === 'wiregen') {
             const jsonStr = code.trim();
+            lastDiagramJson = jsonStr;
             const escaped = jsonStr.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
             html += '<div class="wiregen-mount" data-diagram="' + escaped + '"></div>';
           } else {
@@ -405,7 +642,7 @@
       if (line.startsWith('# ')) { cl(); html += '<div class="project-name" contenteditable="true" spellcheck="false" onblur="persistTitle(this)">' + inlineFmt(esc(line.slice(2).trim())) + '</div><div class="project-name-hint">click to rename</div>'; continue; }
       if (line.startsWith('## ')) { cl(); sec = line.slice(3).trim(); partsInSection = []; html += '<div class="section-header">' + esc(sec) + '</div>'; continue; }
       if (/^[-*]\s/.test(line)) {
-        if (inOl) { html += '</div>'; inOl = false; }
+        if (inOl) { cl(); }
         if (!inUl) { html += '<ul class="parts-list">'; inUl = true; }
         const partText = line.replace(/^[-*]\s/, '');
         if (/^PARTS$/i.test(sec)) {
@@ -417,11 +654,11 @@
       }
       if (/^\d+\.\s/.test(line)) {
         if (inUl) { html += '</ul>'; inUl = false; }
-        if (!inOl) { html += '<div class="step-book">'; inOl = true; }
+        if (!inOl) { inOl = true; }
         const stepNum = line.match(/^(\d+)\./)[1];
         const stepText = line.replace(/^\d+\.\s/, '');
         const action = classifyAction(stepText);
-        html += '<div class="step-card"><div class="step-badge">' + esc(stepNum) + '</div><div class="step-icon">' + STEP_ICONS[action] + '</div><div class="step-body"><div class="step-action">' + STEP_LABELS[action] + '</div><div class="step-text">' + inlineFmt(esc(stepText)) + '</div></div></div>';
+        stepBuffer.push({ num: stepNum, text: stepText, action });
         continue;
       }
       if (!line.trim()) {
@@ -462,10 +699,45 @@
       el.dataset.mounted = '1';
       try {
         const diagram = JSON.parse(el.dataset.diagram);
+        const validation = validateDiagram(diagram);
+        if (!validation.ok) throw new Error(validation.issues[0] || 'Unsupported diagram');
         const inst = mount(WiringCanvas, { target: el, props: { diagram } });
         _wiregenInstances.push(inst);
       } catch (err) {
         el.innerHTML = '<p style="color:var(--hi);font-size:12px;">Diagram error: ' + esc(err.message) + '</p>';
+      }
+    });
+  }
+
+  function destroyInstructionBookInstances() {
+    _instructionBookInstances.forEach(inst => { try { unmount(inst); } catch {} });
+    _instructionBookInstances = [];
+  }
+
+  function mountInstructionBooks() {
+    if (!buildOutput) return;
+    const mounts = buildOutput.querySelectorAll('.instruction-book-mount');
+    mounts.forEach(el => {
+      if (el.dataset.mounted) return;
+      el.dataset.mounted = '1';
+      try {
+        const steps = JSON.parse(
+          el.dataset.steps
+            .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"')
+        );
+        let diagram = null;
+        const diagRaw = el.dataset.diagram;
+        if (diagRaw) {
+          try {
+            diagram = JSON.parse(
+              diagRaw.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"')
+            );
+          } catch { /* diagram is optional */ }
+        }
+        const inst = mount(InstructionBook, { target: el, props: { steps, diagram } });
+        _instructionBookInstances.push(inst);
+      } catch (err) {
+        el.innerHTML = '<p style="color:var(--hi);font-size:12px;">Instruction book error: ' + esc(err.message) + '</p>';
       }
     });
   }
@@ -659,9 +931,13 @@
       }
       if (buf.trim()) { const p = parseLine(buf); if (p) { if (p.error) err2 = p.error; else if (p.t) { accumulated += p.t; } } }
       stopTyping(); displayed = accumulated.length;
+      const support = summarizeSupport(accumulated);
+      if (!support.ok) throw new Error(support.issues.join(' '));
       destroyWiregenInstances();
+      destroyInstructionBookInstances();
       buildOutput.innerHTML = renderMd(accumulated); scrollOut();
       mountWiregenDiagrams();
+      mountInstructionBooks();
       buildOutput.classList.remove('streaming-cursor');
       if (thinkShown) { thinkEl.remove(); thinkShown = false; }
 
@@ -672,18 +948,23 @@
         lastPrompt = text; lastGuide = accumulated; lastSkill = getSkill();
         lastTs = addHist(text, lastSkill, accumulated); gid('btnDelete').style.display = '';
         addMsg('Build guide ready. You can ask me to edit it.', 'bot');
-        addSimBtn();
+        if (support.canSimulate) addSimBtn();
       }
     } catch (err) {
       stopTyping(); buildOutput.classList.remove('streaming-cursor');
       if (thinkShown) { thinkEl.remove(); thinkShown = false; }
+      if (err.name !== 'AbortError') console.error('[mertle] generate error:', err);
       if (err.name === 'AbortError') {
         addMsg('Stopped.', 'bot');
         if (!accumulated) { buildOutput.classList.remove('active'); emptyState.classList.remove('hidden'); outputContext.textContent = ''; workspace.classList.add('no-build'); }
       } else {
         const m = err.message || '';
-        const friendly = /api.key|authentication|401|invalid.*key|unauthorized/i.test(m)
+        const friendly = /credit|billing|too.low|balance/i.test(m)
+          ? 'Whoops! Your Anthropic credit balance is too low — add credits at console.anthropic.com and try again.'
+          : /api.key|authentication|401|invalid.*key|unauthorized/i.test(m)
           ? 'Whoops! API key error — check your key in Settings and try again.'
+          : /failed validation|diagram unavailable|must include a valid wiregen diagram|unsupported functional parts/i.test(m)
+          ? m
           : /rate.limit|429|too many/i.test(m)
           ? 'Whoops! Too many requests — wait a moment and try again.'
           : /network|fetch|failed to fetch|load/i.test(m)
@@ -761,7 +1042,13 @@
       try {
         const res = await fetch('/api/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: lastPrompt, guide: lastGuide }) });
         if (!res.ok) { const { error } = await res.json(); throw new Error(error); }
-        const { embedUrl, projectUrl } = await res.json();
+        const result = await res.json();
+        if (result.unsupported) {
+          addMsg(`Simulation not available — this project uses parts Wokwi doesn't support: ${result.reason}`, 'bot');
+          btn.innerHTML = 'SIMULATE &gt;&gt;'; btn.disabled = false;
+          return;
+        }
+        const { embedUrl, projectUrl } = result;
         if (!embedUrl?.startsWith('https://wokwi.com/') || !projectUrl?.startsWith('https://wokwi.com/')) throw new Error('Invalid simulation URL');
         btn.remove();
         const fc = document.createElement('div'); fc.classList.add('sim-frame-container');
@@ -835,6 +1122,17 @@
     chatToggle = gid('chatToggle');
     workspace = document.querySelector('main.workspace');
 
+    /* Initialise 2 clouds with random starting ideas */
+    const pick = (exclude) => {
+      const pool = exclude ? PROJECT_IDEAS.filter(p => p !== exclude) : PROJECT_IDEAS;
+      return pool[Math.floor(Math.random() * pool.length)];
+    };
+    const first = pick();
+    cloudProps = [
+      { idea: first,       cls: 'cloud-1' },
+      { idea: pick(first), cls: 'cloud-2' },
+    ];
+
     /* Expose globals for inline onclick handlers in renderMd() output */
     window.toggleCode = toggleCode;
     window.copyCode = copyCode;
@@ -873,14 +1171,14 @@
       if (!lastGuide) { addMsg('No build to export yet — generate a project first.', 'bot'); return; }
       const ne = buildOutput.querySelector('.project-name');
       let g = lastGuide; if (ne) g = g.replace(/^# .+$/m, '# ' + ne.textContent.trim());
-      const text = ['mertle.bot Build Guide | Skill: ' + (lastSkill || getSkill()), 'Prompt: ' + lastPrompt, '', g].join('\n');
-      navigator.clipboard.writeText(text).then(() => { const b = gid('btnExport'); b.classList.add('active'); setTimeout(() => b.classList.remove('active'), 1200); }).catch(() => { addMsg('Copy failed — check browser permissions', 'bot'); });
+      downloadProjectFolder(g, lastPrompt);
+      const b = gid('btnExport'); b.classList.add('active'); setTimeout(() => b.classList.remove('active'), 1200);
     });
     gid('btnSettings').addEventListener('click', () => { _settingsTrigger = document.activeElement; openSettings(); });
     gid('btnDelete').addEventListener('click', () => { if (!lastGuide) return; showDeleteConfirm(getProjectName({ guide: lastGuide, prompt: lastPrompt }), lastGuide, () => deleteFromHist(lastTs, null)); });
 
     /* Delete modal */
-    gid('delModalDownload').addEventListener('click', () => { if (_del.guide && _del.prompt) downloadGuide(_del.guide, _del.prompt); });
+    gid('delModalDownload').addEventListener('click', () => { if (_del.guide && _del.prompt) downloadProjectFolder(_del.guide, _del.prompt); });
     gid('delModalConfirm').addEventListener('click', () => { if (_del.cb) _del.cb(); closeDelModal(); });
     gid('delModalCancel').addEventListener('click', closeDelModal);
     gid('delModalBg').addEventListener('click', e => { if (e.target === gid('delModalBg')) closeDelModal(); });
@@ -961,6 +1259,25 @@
 
 <!-- ═══ HERO ═══ -->
 <div class="hero" id="hero">
+  <!-- Floating clouds -->
+  <div class="hero-clouds">
+    {#each cloudProps as c, i}
+      <div class="cloud {c.cls}"
+           role="button"
+           tabindex="0"
+           on:animationiteration={() => rotateCloudIdea(i)}
+           on:click={() => { heroInput.value = c.idea; send(c.idea); }}
+           on:keydown={e => { if (e.key === 'Enter' || e.key === ' ') { heroInput.value = c.idea; send(c.idea); } }}
+      >
+        <div class="cloud-rect cloud-rect-a"></div>
+        <div class="cloud-rect cloud-rect-b"></div>
+        <div class="cloud-label">
+          {c.idea}
+          <span class="cloud-label-hint">CLICK TO BUILD</span>
+        </div>
+      </div>
+    {/each}
+  </div>
   <div class="hero-card">
     <div class="hero-title">mertle.bot</div>
     <div class="hero-tag">describe it. build it.</div>
@@ -999,7 +1316,7 @@
       <button type="button" class="topbar-btn" id="btnHistory" title="History">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12,7 12,12 16,14"/></svg>
       </button>
-      <button type="button" class="topbar-btn" id="btnExport" title="Copy to clipboard">
+      <button type="button" class="topbar-btn" id="btnExport" title="Download guide">
         <svg viewBox="0 0 24 24"><path d="M21,15v4a2,2 0 0,1-2,2H5a2,2 0 0,1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       </button>
       <button type="button" class="topbar-btn" id="btnDelete" title="Delete project" style="display:none">

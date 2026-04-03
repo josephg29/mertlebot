@@ -3,6 +3,7 @@ import { json } from '@sveltejs/kit';
 import { getApiKey } from '$lib/server/config.js';
 import { SIM_PROMPT } from '$lib/server/prompts.js';
 import { extractLibraries } from '$lib/server/wokwi.js';
+import { summarizeSupport } from '$lib/projectSupport.js';
 
 export async function POST({ request }) {
   let body;
@@ -20,6 +21,17 @@ export async function POST({ request }) {
   const apiKey = getApiKey();
   if (!apiKey) return json({ error: 'API key not configured' }, { status: 401 });
 
+  const support = summarizeSupport(guide);
+  if (!support.ok) {
+    return json({ error: `Guide failed validation: ${support.issues.join(' ')}` }, { status: 400 });
+  }
+  if (!support.canSimulate) {
+    const reason = support.safeTextOnly
+      ? 'This project uses parts that are outside the simulator-supported set.'
+      : 'This wiring diagram uses parts the simulator cannot reproduce yet.';
+    return json({ unsupported: true, reason });
+  }
+
   try {
     const client = new Anthropic({ apiKey });
 
@@ -34,6 +46,12 @@ export async function POST({ request }) {
     });
 
     const text = msg.content[0].text;
+
+    if (text.trimStart().startsWith('UNSUPPORTED_PARTS:')) {
+      const reason = text.split('\n')[0].replace('UNSUPPORTED_PARTS:', '').trim();
+      return json({ unsupported: true, reason });
+    }
+
     const diagramMatch = text.match(/```json\s*\n([\s\S]*?)```/);
     const sketchMatch = text.match(/```(?:cpp|ino|arduino|c\+\+)\s*\n([\s\S]*?)```/);
 
