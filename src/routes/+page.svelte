@@ -130,6 +130,7 @@
   function scrollChat() { if (chatLog) chatLog.scrollTop = chatLog.scrollHeight; }
   function scrollOut() { if (outputScroll) outputScroll.scrollTop = outputScroll.scrollHeight; }
   function normalizeSkillLabel(skill) { return `${skill || 'MONKEY'} MODE`; }
+  function getRenderedSkill() { return lastSkill || getSkill(); }
   function hashString(str = '') {
     let hash = 0;
     for (let i = 0; i < str.length; i++) hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
@@ -256,7 +257,7 @@
     const steps = [...buildOutput.querySelectorAll('.instruction-book-mount')].flatMap((mount) => {
       try { return JSON.parse(mount.dataset.steps || '[]'); } catch { return []; }
     });
-    const lines = [`# ${title}`, '', `Skill Level: ${getSkill()}`, ''];
+    const lines = [`# ${title}`, '', `Skill Level: ${normalizeSkillLabel(getRenderedSkill())}`, ''];
     if (description) lines.push('## Description', '', description, '');
     if (parts.length) lines.push('## Parts', '', ...parts.map((part) => `- ${part}`), '');
     if (codes.length) {
@@ -362,7 +363,7 @@
       op.classList.add('output-entering');
       op.addEventListener('animationend', () => op.classList.remove('output-entering'), { once: true });
     });
-    outputContext.textContent = '';
+    outputContext.textContent = normalizeSkillLabel(lastSkill || item.skill || getSkill());
     chatInput.value = ''; charCount.textContent = '0/300';
     gid('btnDelete').style.display = '';
     if (support.canSimulate) addSimBtn();
@@ -1001,8 +1002,10 @@
       if (line.startsWith('# ')) {
         cl();
         title = line.slice(2).trim();
+        const skillMeta = normalizeSkillLabel(getRenderedSkill());
         html += '<div class="build-edit-bar"><button type="button" class="edit-project-btn" onclick="triggerProjectEdit()"><span class="edit-project-icon" aria-hidden="true"></span>EDIT THIS PROJECT</button><div class="build-edit-copy">Jump back to the conversation and ask for a revision.</div></div>';
         html += '<div class="project-name" contenteditable="true" spellcheck="false" onblur="persistTitle(this)">' + inlineFmt(esc(title)) + '</div><div class="project-name-hint">click to rename</div>';
+        html += '<div class="build-meta"><span class="build-meta-label">Build mode</span><span class="build-meta-pill">' + esc(skillMeta) + '</span></div>';
         html += renderBuildNav();
         openSection('overview');
         html += renderProjectPreview(title, raw);
@@ -1294,7 +1297,7 @@
           </div>
           <div class="clarify-summary-row">
             <span class="clarify-summary-label">Skill level</span>
-            <span class="clarify-summary-value">${esc(getSkill())}</span>
+            <span class="clarify-summary-value">${esc(normalizeSkillLabel(getSkill()))}</span>
           </div>
           <div class="clarify-summary-note">Answered ${total} setup question${total === 1 ? '' : 's'}.</div>
         </div>
@@ -1394,6 +1397,7 @@
       if (/^#\s/m.test(accumulated) && /## PARTS/i.test(accumulated) && /## STEPS/i.test(accumulated)) {
         lastPrompt = text; lastGuide = accumulated; lastSkill = getSkill();
         lastTs = addHist(text, lastSkill, accumulated); gid('btnDelete').style.display = '';
+        outputContext.textContent = normalizeSkillLabel(lastSkill);
         addMsg('Build guide ready. You can ask me to edit it.', 'bot');
         if (support.canSimulate) addSimBtn();
       }
