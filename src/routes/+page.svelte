@@ -964,18 +964,19 @@
         } else { html += '</ul>'; }
         inUl = false;
       }
-      if (inOl) {
-        if (stepBuffer.length) {
-          const stepsJson = JSON.stringify(stepBuffer)
-            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-          const diagJson = lastDiagramJson
-            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-          html += '<div class="instruction-book-mount" data-steps="' + stepsJson + '" data-diagram="' + diagJson + '"></div>';
-          stepBuffer = [];
-        } else {
-          html += '</div>';
-        }
-        inOl = false;
+        if (inOl) {
+          if (stepBuffer.length) {
+            const stepsJson = JSON.stringify(stepBuffer)
+              .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+            const diagJson = lastDiagramJson
+              .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+            const projectId = hashString((title || 'project') + '|' + raw);
+            html += '<div class="instruction-book-mount" data-project-id="' + projectId + '" data-steps="' + stepsJson + '" data-diagram="' + diagJson + '"></div>';
+            stepBuffer = [];
+          } else {
+            html += '</div>';
+          }
+          inOl = false;
       }
     }
     for (let i = 0; i < lines.length; i++) {
@@ -1112,7 +1113,8 @@
             );
           } catch { /* diagram is optional */ }
         }
-        const inst = mount(InstructionBook, { target: el, props: { steps, diagram } });
+        const projectId = el.dataset.projectId || hashString(JSON.stringify(steps));
+        const inst = mount(InstructionBook, { target: el, props: { steps, diagram, projectId } });
         _instructionBookInstances.push(inst);
       } catch (err) {
         el.innerHTML = '<p style="color:var(--hi);font-size:12px;">Instruction book error: ' + esc(err.message) + '</p>';
