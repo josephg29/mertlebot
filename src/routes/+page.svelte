@@ -3,7 +3,7 @@
   import WiringCanvas from '$lib/wiregen/WiringCanvas.svelte';
   import InstructionBook from '$lib/InstructionBook.svelte';
   import { mount, unmount } from 'svelte';
-  import { extractStepGroups, stripMarkdown, summarizeSupport, validateDiagram } from '$lib/projectSupport.js';
+  import { extractStepGroups, stripMarkdown, summarizeSupport, validateDiagram, repairGuide } from '$lib/projectSupport.js';
 
   /* ── Shared SVG icons ── */
   const ICON_TRASH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2 0 0,1-2,2H8a2,2 0 0,1-2-2L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4a1,1 0 0,1,1-1h4a1,1 0 0,1,1,1v2"/></svg>';
@@ -20,6 +20,35 @@
     default:  '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2"/><path d="M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42"/><path d="M19.78 4.22l-1.42 1.42M5.64 18.36l-1.42 1.42"/></svg>'
   };
   const STEP_LABELS = { wire: 'WIRE', code: 'CODE', power: 'POWER', test: 'TEST', assemble: 'BUILD', default: 'STEP' };
+  const HERO_EXAMPLES = [
+    'a motion-activated light',
+    'a temperature sensor with LCD display',
+    'a sound-reactive LED strip',
+    'a soil moisture alert system',
+    'a servo-controlled door lock',
+    'a WiFi weather station'
+  ];
+  const SKILL_HELP = {
+    MONKEY: 'Maximum hand-holding, no experience needed.',
+    NOVICE: 'Friendly explanations with beginner-safe wiring and upload steps.',
+    BUILDER: 'Balanced guidance for makers comfortable assembling circuits.',
+    HACKER: 'Assumes comfort with circuits, debugging, and flashing firmware.',
+    EXPERT: 'Moves fast with concise explanations and fewer training wheels.'
+  };
+  const BUILD_STATUS_STEPS = [
+    'Understanding your idea...',
+    'Selecting components...',
+    'Writing the code...',
+    'Creating wiring diagram...',
+    'Building step-by-step guide...'
+  ];
+  const BUILD_NAV_ITEMS = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'wiring', label: 'Wiring' },
+    { key: 'parts', label: 'Parts' },
+    { key: 'code', label: 'Code' },
+    { key: 'steps', label: 'Steps' }
+  ];
 
   function classifyAction(text) {
     const t = text.toLowerCase();
@@ -83,9 +112,15 @@
   let _settingsTrigger = null;
   let _wiregenInstances = [];
   let _instructionBookInstances = [];
+  let loadingStepIndex = -1, loadingProgress = 0, loadingStartTs = 0;
+  let loadingStepTimers = [];
+  let loadingProgressFrame = null;
+  let loadingHideTimer = null;
+  let buildNavCleanup = () => {};
 
   /* ── Clarify state ── */
   let clarifyQuestions = [], clarifyAnswers = {}, clarifyIdx = 0, clarifyOriginalPrompt = '';
+  let clarifyStage = 'question';
 
   const SKILLS = { 1: 'MONKEY', 2: 'NOVICE', 3: 'BUILDER', 4: 'HACKER', 5: 'EXPERT' };
   const INIT_MSG = '<div class="msg bot"><div class="msg-who">MERTLE.BOT</div><div class="msg-body">Ready. Describe any hardware project to get started.</div></div>';
@@ -94,12 +129,173 @@
   function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function scrollChat() { if (chatLog) chatLog.scrollTop = chatLog.scrollHeight; }
   function scrollOut() { if (outputScroll) outputScroll.scrollTop = outputScroll.scrollHeight; }
+  function normalizeSkillLabel(skill) { return `${skill || 'MONKEY'} MODE`; }
+  function hashString(str = '') {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+    return Math.abs(hash).toString(36);
+  }
+  function updateHeroBuildState() {
+    if (!heroInput || !heroGo) return;
+    const valid = heroInput.value.trim().length >= 10;
+    heroGo.disabled = !valid;
+    const hint = gid('heroPromptHint');
+    if (hint) hint.textContent = valid ? 'Ready to generate a full build guide.' : 'Describe your project in at least 10 characters.';
+  }
+  function updateSkillHelper(skill) {
+    const message = SKILL_HELP[skill] || SKILL_HELP.MONKEY;
+    const heroHelp = gid('heroSkillHelp');
+    const modalHelp = gid('skillHelpModal');
+    if (heroHelp) heroHelp.textContent = message;
+    if (modalHelp) modalHelp.textContent = message;
+  }
+  function applyExamplePrompt(prompt) {
+    if (!heroInput) return;
+    heroInput.value = prompt;
+    updateHeroBuildState();
+    heroInput.focus();
+  }
+  function slugifySection(section) {
+    const s = (section || '').toLowerCase();
+    if (s.includes('wiring')) return 'wiring';
+    if (s.includes('part')) return 'parts';
+    if (s.includes('code') || s.includes('firmware') || s.includes('sketch')) return 'code';
+    if (s.includes('step') || s.includes('build') || s.includes('assembly') || s.includes('instructions')) return 'steps';
+    return 'overview';
+  }
+  function inferPreviewType(title, guide) {
+    const text = `${title}\n${guide}`.toLowerCase();
+    if (/\b(servo|lock|door|arm|sweep)\b/.test(text)) return 'servo';
+    if (/\b(display|lcd|oled|weather|counter|count|screen)\b/.test(text)) return 'display';
+    if (/\b(wifi|wireless|station|mqtt|radio|signal)\b/.test(text)) return 'signal';
+    if (/\b(sensor|motion|moisture|ultrasonic|temperature|humidity)\b/.test(text)) return 'sensor';
+    if (/\b(light|led|rgb|strip|blink|sound-reactive|lamp)\b/.test(text)) return 'led';
+    return 'pulse';
+  }
+  function renderProjectPreview(title, guide) {
+    const type = inferPreviewType(title, guide);
+    const label = {
+      led: 'Animated LED response preview',
+      servo: 'Animated servo sweep preview',
+      display: 'Animated display preview',
+      signal: 'Animated wireless activity preview',
+      sensor: 'Animated sensing preview',
+      pulse: 'Animated project behavior preview'
+    }[type];
+    return `
+      <div class="preview-card">
+        <div class="section-header">Project Preview</div>
+        <div class="preview-stage preview-${type}" aria-label="${esc(label)}">
+          <div class="preview-caption">Expected behavior</div>
+          <div class="preview-scene">
+            <div class="preview-core"></div>
+            <div class="preview-leds"><span></span><span></span><span></span><span></span></div>
+            <div class="preview-servo-base"></div>
+            <div class="preview-servo-arm"></div>
+            <div class="preview-display-screen">
+              <span class="preview-display-line"></span>
+              <span class="preview-display-line"></span>
+              <span class="preview-display-line"></span>
+            </div>
+            <div class="preview-signal">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="preview-rings">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+          <div class="preview-description">${esc(label)}</div>
+        </div>
+      </div>
+    `;
+  }
+  function renderBuildNav() {
+    return `
+      <nav class="build-nav" aria-label="Build sections">
+        ${BUILD_NAV_ITEMS.map(item => `
+          <button type="button" class="build-nav-tab" data-nav-target="${item.key}">
+            ${item.label}
+          </button>
+        `).join('')}
+      </nav>
+    `;
+  }
+  function renderDiagramFallback(message = '') {
+    return `
+      <div class="diagram-fallback">
+        <div class="diagram-fallback-visual" aria-hidden="true">
+          <div class="diagram-board"></div>
+          <div class="diagram-wire diagram-wire-a"></div>
+          <div class="diagram-wire diagram-wire-b"></div>
+          <div class="diagram-node diagram-node-a"></div>
+          <div class="diagram-node diagram-node-b"></div>
+        </div>
+        <div class="diagram-fallback-title">Diagram coming soon for this module</div>
+        <div class="diagram-fallback-copy">${message ? esc(message) + ' ' : ''}Ask me to describe the wiring in text instead.</div>
+      </div>
+    `;
+  }
+  function getCurrentProjectTitle() {
+    return buildOutput?.querySelector('.project-name')?.textContent?.trim() || 'mertle-project';
+  }
+  function getBuildMarkdown() {
+    if (!buildOutput) return '';
+    const title = getCurrentProjectTitle();
+    const overviewSection = buildOutput.querySelector('[data-build-section="overview"]');
+    const description = [...(overviewSection?.querySelectorAll('p') || [])]
+      .map((p) => p.textContent.trim())
+      .filter(Boolean)
+      .join('\n\n');
+    const parts = [...buildOutput.querySelectorAll('[data-build-section="parts"] .parts-list li')]
+      .map((li) => (li.querySelector('.part-name')?.textContent || li.textContent).trim())
+      .filter(Boolean);
+    const codes = [...buildOutput.querySelectorAll('.code-wrap')].map((wrap) => ({
+      name: wrap.querySelector('.file-name')?.textContent?.trim() || 'code.txt',
+      content: wrap.querySelector('.wiring-block')?.textContent?.trim() || ''
+    })).filter((entry) => entry.content);
+    const steps = [...buildOutput.querySelectorAll('.instruction-book-mount')].flatMap((mount) => {
+      try { return JSON.parse(mount.dataset.steps || '[]'); } catch { return []; }
+    });
+    const lines = [`# ${title}`, '', `Skill Level: ${getSkill()}`, ''];
+    if (description) lines.push('## Description', '', description, '');
+    if (parts.length) lines.push('## Parts', '', ...parts.map((part) => `- ${part}`), '');
+    if (codes.length) {
+      lines.push('## Code', '');
+      codes.forEach(({ name, content }) => {
+        lines.push(`### ${name}`, '', '```cpp', content, '```', '');
+      });
+    }
+    if (steps.length) lines.push('## Steps', '', ...steps.map((step) => `${step.num}. ${step.text}`), '');
+    return lines.join('\n').trim() + '\n';
+  }
+  function exportPdf() {
+    if (!lastGuide && !buildOutput?.innerHTML.trim()) return;
+    window.print();
+  }
+  function downloadMarkdownGuide() {
+    const markdown = getBuildMarkdown();
+    if (!markdown) return;
+    const slug = getCurrentProjectTitle().replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'mertle-project';
+    downloadBlob(markdown, `${slug}.md`, 'text/markdown');
+  }
+  async function copyAllCodeBlocks() {
+    const blocks = [...buildOutput.querySelectorAll('.code-wrap')].map((wrap) => {
+      const name = wrap.querySelector('.file-name')?.textContent?.trim() || 'code.txt';
+      const content = wrap.querySelector('.wiring-block')?.textContent?.trim() || '';
+      return content ? `// ${name}\n${content}` : '';
+    }).filter(Boolean);
+    if (!blocks.length) return;
+    await navigator.clipboard.writeText(blocks.join('\n\n'));
+  }
 
   /* ── Session ── */
   function newSession() {
     if (generating && controller) { controller.abort(); controller = null; setGenerating(false); }
     gid('clarifyBg') && gid('clarifyBg').classList.remove('open');
     clarifyQuestions = []; clarifyAnswers = {}; clarifyOriginalPrompt = '';
+    clarifyStage = 'question';
+    buildNavCleanup();
+    buildNavCleanup = () => {};
     destroyWiregenInstances();
     destroyInstructionBookInstances();
     buildOutput.classList.remove('active'); buildOutput.innerHTML = '';
@@ -148,16 +344,18 @@
   }
   function restoreProject(item) {
     if (!item.guide) return false;
-    const support = summarizeSupport(item.guide);
+    const guide = repairGuide(item.guide);
+    const support = summarizeSupport(guide);
     lastPrompt = item.prompt; lastGuide = item.guide; lastSkill = item.skill; lastTs = item.ts;
     chatLog.innerHTML = item.chat || INIT_MSG;
     emptyState.classList.add('hidden');
     destroyWiregenInstances();
     destroyInstructionBookInstances();
     buildOutput.classList.add('active'); buildOutput.classList.remove('streaming-cursor');
-    buildOutput.innerHTML = renderMd(item.guide);
+    buildOutput.innerHTML = renderMd(guide);
     mountWiregenDiagrams();
     mountInstructionBooks();
+    setupBuildNavigation();
     workspace.classList.remove('no-build');
     requestAnimationFrame(() => {
       const op = workspace.querySelector('.output');
@@ -510,7 +708,9 @@
     localStorage.setItem('mrt-skill', n);
     document.querySelectorAll('.hero-skill').forEach(b => b.classList.toggle('active', b.dataset.skill === String(n)));
     skillGrid.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.skill === String(n)));
-    statusSkill.textContent = SKILLS[n] || 'MONKEY';
+    const skill = SKILLS[n] || 'MONKEY';
+    statusSkill.textContent = normalizeSkillLabel(skill);
+    updateSkillHelper(skill);
   }
   function getSkill() { return SKILLS[Number(localStorage.getItem('mrt-skill')) || 1] || 'MONKEY'; }
   function getAge() { return Number(localStorage.getItem('mrt-age')) || 25; }
@@ -530,6 +730,144 @@
     t.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>';
     w.appendChild(l); w.appendChild(t); chatLog.appendChild(w); scrollChat();
     return w;
+  }
+
+  function renderLoadingFeed() {
+    const feed = gid('loadingFeed');
+    if (!feed) return;
+    feed.innerHTML = `
+      <div class="loading-feed-card">
+        <div class="loading-feed-title">BUILDING YOUR PROJECT</div>
+        <div class="loading-feed-list">
+          ${BUILD_STATUS_STEPS.map((step, idx) => {
+            const state = idx < loadingStepIndex ? 'done' : idx === loadingStepIndex ? 'active' : 'pending';
+            return `
+              <div class="loading-feed-step ${state}">
+                <span class="loading-feed-icon">${idx < loadingStepIndex ? '✓' : idx === loadingStepIndex ? '>' : '·'}</span>
+                <span class="loading-feed-text">${esc(step)}</span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+        <div class="loading-feed-progress">
+          <div class="loading-feed-progress-bar" style="width:${loadingProgress.toFixed(1)}%"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function clearLoadingFeedTimers() {
+    loadingStepTimers.forEach(id => clearTimeout(id));
+    loadingStepTimers = [];
+    if (loadingProgressFrame) cancelAnimationFrame(loadingProgressFrame);
+    loadingProgressFrame = null;
+    if (loadingHideTimer) clearTimeout(loadingHideTimer);
+    loadingHideTimer = null;
+  }
+
+  function tickLoadingProgress() {
+    if (!generating) return;
+    const elapsed = performance.now() - loadingStartTs;
+    loadingProgress = Math.min(90, 90 * (1 - Math.exp(-elapsed / 5000)));
+    renderLoadingFeed();
+    loadingProgressFrame = requestAnimationFrame(tickLoadingProgress);
+  }
+
+  function startLoadingFeed() {
+    const feed = gid('loadingFeed');
+    if (!feed) return;
+    clearLoadingFeedTimers();
+    loadingStepIndex = 0;
+    loadingProgress = 4;
+    loadingStartTs = performance.now();
+    feed.hidden = false;
+    renderLoadingFeed();
+    BUILD_STATUS_STEPS.slice(1).forEach((_, offset) => {
+      const timer = setTimeout(() => {
+        if (!generating) return;
+        loadingStepIndex = Math.min(offset + 1, BUILD_STATUS_STEPS.length - 1);
+        renderLoadingFeed();
+      }, 1200 + offset * 1100);
+      loadingStepTimers.push(timer);
+    });
+    loadingProgressFrame = requestAnimationFrame(tickLoadingProgress);
+  }
+
+  function finishLoadingFeed() {
+    const feed = gid('loadingFeed');
+    if (!feed) return;
+    clearLoadingFeedTimers();
+    loadingStepIndex = BUILD_STATUS_STEPS.length;
+    loadingProgress = 100;
+    renderLoadingFeed();
+    loadingHideTimer = setTimeout(() => {
+      feed.hidden = true;
+    }, 380);
+  }
+
+  function focusProjectEdit() {
+    if (!chatPane || !chatInput) return;
+    chatPane.classList.remove('collapsed');
+    const prompt = "I'd like to change...";
+    chatInput.value = prompt;
+    charCount.textContent = `${prompt.length}/300`;
+    chatInput.focus();
+    chatInput.setSelectionRange(prompt.length, prompt.length);
+  }
+
+  function jumpToBuildSection(key) {
+    const target = buildOutput?.querySelector(`[data-build-section="${key}"]`);
+    if (!target || !outputScroll) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function setupBuildNavigation() {
+    buildNavCleanup();
+    buildNavCleanup = () => {};
+    if (!buildOutput || !outputScroll) return;
+    const nav = buildOutput.querySelector('.build-nav');
+    if (!nav) return;
+    const tabs = [...nav.querySelectorAll('.build-nav-tab')];
+    const sections = tabs.map(tab => ({
+      key: tab.dataset.navTarget,
+      tab,
+      section: buildOutput.querySelector(`[data-build-section="${tab.dataset.navTarget}"]`)
+    }));
+    const setActive = (key) => {
+      tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.navTarget === key));
+    };
+    sections.forEach(({ tab, section }) => {
+      tab.classList.toggle('disabled', !section);
+      const handler = () => {
+        if (!section) return;
+        jumpToBuildSection(tab.dataset.navTarget);
+      };
+      tab.addEventListener('click', handler);
+      tab._navHandler = handler;
+    });
+    const onScroll = () => {
+      const rootTop = outputScroll.getBoundingClientRect().top;
+      let active = 'overview';
+      let best = -Infinity;
+      sections.forEach(({ key, section }) => {
+        if (!section) return;
+        const offset = section.getBoundingClientRect().top - rootTop;
+        if (offset <= 120 && offset > best) {
+          best = offset;
+          active = key;
+        }
+      });
+      setActive(active);
+    };
+    outputScroll.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    buildNavCleanup = () => {
+      outputScroll.removeEventListener('scroll', onScroll);
+      sections.forEach(({ tab }) => {
+        if (tab._navHandler) tab.removeEventListener('click', tab._navHandler);
+        delete tab._navHandler;
+      });
+    };
   }
 
   /* ── Markdown renderer ── */
@@ -596,9 +934,28 @@
   }
 
   function renderMd(raw) {
-    let html = ''; const lines = raw.split('\n'); let inCode = false, codeLang = '', code = '', inUl = false, inOl = false, sec = '';
+    let html = '';
+    const lines = raw.split('\n');
+    let inCode = false, codeLang = '', code = '', inUl = false, inOl = false, sec = '';
     let partsInSection = [];
-    let stepBuffer = [], lastDiagramJson = '';
+    let stepBuffer = [], lastDiagramJson = '', title = '';
+    let currentSectionKey = '', sectionOpen = false, sectionHasDiagram = false;
+    lastPartsForAmazon = [];
+    function closeSection() {
+      if (!sectionOpen) return;
+      if (currentSectionKey === 'wiring' && !sectionHasDiagram) html += renderDiagramFallback();
+      html += '</section>';
+      sectionOpen = false;
+      sectionHasDiagram = false;
+    }
+    function openSection(key, label) {
+      closeSection();
+      currentSectionKey = key;
+      sectionOpen = true;
+      sectionHasDiagram = false;
+      html += `<section class="build-section" id="build-section-${key}" data-build-section="${key}">`;
+      if (label) html += '<div class="section-header">' + esc(label) + '</div>';
+    }
     function cl() {
       if (inUl) {
         if (/^PARTS$/i.test(sec) && partsInSection.length) {
@@ -628,6 +985,7 @@
           if (codeLang === 'wiregen') {
             const jsonStr = code.trim();
             lastDiagramJson = jsonStr;
+            sectionHasDiagram = true;
             const escaped = jsonStr.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
             html += '<div class="wiregen-mount" data-diagram="' + escaped + '"></div>';
           } else {
@@ -639,16 +997,31 @@
         continue;
       }
       if (inCode) { code += line + '\n'; continue; }
-      if (line.startsWith('# ')) { cl(); html += '<div class="project-name" contenteditable="true" spellcheck="false" onblur="persistTitle(this)">' + inlineFmt(esc(line.slice(2).trim())) + '</div><div class="project-name-hint">click to rename</div>'; continue; }
-      if (line.startsWith('## ')) { cl(); sec = line.slice(3).trim(); partsInSection = []; html += '<div class="section-header">' + esc(sec) + '</div>'; continue; }
+      if (line.startsWith('# ')) {
+        cl();
+        title = line.slice(2).trim();
+        html += '<div class="build-edit-bar"><button type="button" class="edit-project-btn" onclick="triggerProjectEdit()"><span class="edit-project-icon" aria-hidden="true"></span>EDIT THIS PROJECT</button><div class="build-edit-copy">Jump back to the conversation and ask for a revision.</div></div>';
+        html += '<div class="project-name" contenteditable="true" spellcheck="false" onblur="persistTitle(this)">' + inlineFmt(esc(title)) + '</div><div class="project-name-hint">click to rename</div>';
+        html += renderBuildNav();
+        openSection('overview');
+        html += renderProjectPreview(title, raw);
+        continue;
+      }
+      if (line.startsWith('## ')) {
+        cl();
+        sec = line.slice(3).trim();
+        partsInSection = [];
+        openSection(slugifySection(sec), sec);
+        continue;
+      }
       if (/^[-*]\s/.test(line)) {
-        if (inOl) { cl(); }
+        if (inOl) { continue; }
         if (!inUl) { html += '<ul class="parts-list">'; inUl = true; }
         const partText = line.replace(/^[-*]\s/, '');
         if (/^PARTS$/i.test(sec)) {
           partsInSection.push(partText);
           const q = encodeURIComponent(partText);
-          html += '<li><a href="https://www.amazon.com/s?k=' + q + '" target="_blank" rel="noopener noreferrer" class="part-link">' + inlineFmt(esc(partText)) + '</a></li>';
+          html += '<li><span class="part-name">' + inlineFmt(esc(partText)) + '</span><a href="https://www.amazon.com/s?k=' + q + '" target="_blank" rel="noopener noreferrer" class="part-buy-link">Buy</a></li>';
         } else { html += '<li>' + inlineFmt(esc(partText)) + '</li>'; }
         continue;
       }
@@ -664,21 +1037,26 @@
       if (!line.trim()) {
         let next = ''; for (let j = i + 1; j < lines.length; j++) { if (lines[j].trim()) { next = lines[j]; break; } }
         if (inOl && /^\d+\.\s/.test(next)) continue;
+        if (inOl && stepBuffer.length > 0) continue;
         if (inUl && /^[-*]\s/.test(next)) continue;
         cl(); continue;
       }
+      if (inOl && stepBuffer.length > 0) continue;
       cl(); html += '<p>' + inlineFmt(esc(line)) + '</p>';
     }
     if (inCode) {
       if (codeLang === 'wiregen') {
         // Streaming: wiregen block not yet closed — show loading placeholder
+        sectionHasDiagram = true;
         html += '<div class="wiregen-loading">Building wiring diagram...</div>';
       } else {
         const e = highlightArduino(code.trimEnd()), id = 'c-' + Math.random().toString(36).slice(2, 8), fn = guessFile(code, sec);
         html += '<div class="code-wrap" id="wrap-' + id + '"><div class="code-file-bar" onclick="toggleCode(\'' + id + '\')"><span class="file-arrow">&#9654;</span><span class="file-name">' + esc(fn) + '</span><div class="code-file-actions"><button class="code-file-btn" onclick="event.stopPropagation();copyCode(\'' + id + '\',this)">COPY</button><button class="code-file-btn" onclick="event.stopPropagation();downloadCode(\'' + id + '\')">DOWNLOAD</button></div></div><div class="wiring-expand"><pre class="wiring-block" id="' + id + '">' + e + '</pre></div></div>';
       }
     }
-    cl(); return html;
+    cl();
+    closeSection();
+    return html;
   }
 
   function shopAllOnAmazon() {
@@ -704,7 +1082,7 @@
         const inst = mount(WiringCanvas, { target: el, props: { diagram } });
         _wiregenInstances.push(inst);
       } catch (err) {
-        el.innerHTML = '<p style="color:var(--hi);font-size:12px;">Diagram error: ' + esc(err.message) + '</p>';
+        el.innerHTML = renderDiagramFallback(err.message || 'Diagram coming soon for this module');
       }
     });
   }
@@ -748,13 +1126,17 @@
     sendBtn.textContent = on ? 'STOP' : 'SEND';
     sendBtn.classList.toggle('stopping', on);
     chatInput.disabled = on;
+    chatPane?.classList.toggle('generating', on);
+    workspace?.classList.toggle('is-generating', on);
     if (on) {
       statusDot.classList.add('active');
       let d = 0; statusText.textContent = 'BUILDING';
       statusInterval = setInterval(() => { d = (d + 1) % 4; statusText.textContent = 'BUILDING' + '.'.repeat(d); }, 350);
+      startLoadingFeed();
     } else {
       statusDot.classList.remove('active');
       clearInterval(statusInterval); statusText.textContent = 'READY';
+      finishLoadingFeed();
       chatInput.focus();
     }
   }
@@ -768,14 +1150,11 @@
 
   function closeClarifyOverlay() {
     gid('clarifyBg').classList.remove('open');
+    clarifyStage = 'question';
   }
 
   function finishClarify() {
-    const q = clarifyQuestions[clarifyIdx];
-    if (q) {
-      const inp = gid('clarifyInner').querySelector('.clarify-text-input');
-      if (inp) clarifyAnswers[q.id] = inp.value.trim();
-    }
+    if (clarifyStage === 'question') saveClarifyAnswer();
     closeClarifyOverlay();
     try { localStorage.setItem('mrt-last-clarify', JSON.stringify(clarifyAnswers)); } catch {}
     const clarifications = formatClarifications(clarifyAnswers);
@@ -789,19 +1168,38 @@
     _doGenerate(clarifyOriginalPrompt, null);
   }
 
+  function saveClarifyAnswer() {
+    const q = clarifyQuestions[clarifyIdx];
+    if (!q) return;
+    const inp = gid('clarifyInner').querySelector('.clarify-text-input');
+    if (inp) clarifyAnswers[q.id] = inp.value.trim();
+  }
+
+  function renderClarifyFrame({ title, subtitle, progressPct, body, footer }) {
+    gid('clarifyInner').innerHTML = `
+      <div class="clarify-progress-meta">
+        <div class="clarify-progress-label">${esc(title)}</div>
+        <div class="clarify-progress-subtitle">${esc(subtitle)}</div>
+      </div>
+      <div class="clarify-progress-bar"><span style="width:${progressPct}%"></span></div>
+      ${body}
+      <div class="clarify-nav">${footer}</div>
+    `;
+  }
+
   function advanceClarify() {
     const q = clarifyQuestions[clarifyIdx];
     if (!q) { finishClarify(); return; }
-    const inp = gid('clarifyInner').querySelector('.clarify-text-input');
-    if (inp) clarifyAnswers[q.id] = inp.value.trim();
+    saveClarifyAnswer();
     if (clarifyIdx < clarifyQuestions.length - 1) {
       renderClarifyQuestion(clarifyIdx + 1);
     } else {
-      finishClarify();
+      renderClarifySummary();
     }
   }
 
   function renderClarifyQuestion(idx) {
+    clarifyStage = 'question';
     clarifyIdx = idx;
     const q = clarifyQuestions[idx];
     if (!q) return;
@@ -824,15 +1222,20 @@
     const inputHtml = `${chipHtml}<input class="clarify-text-input" type="text" placeholder="${esc(q.hint || 'or type your own...')}" value="${esc(preselect)}" maxlength="200" autocomplete="off" spellcheck="false"/>`;
 
     const isLast = idx === total - 1;
-    gid('clarifyInner').innerHTML = `
-      <div class="clarify-progress">${dots}</div>
-      <div class="clarify-question">${esc(q.question)}</div>
-      ${inputHtml}
-      <div class="clarify-nav">
-        ${idx > 0 ? `<button type="button" class="clarify-back" id="clarifyBack">&lt; BACK</button>` : `<span></span>`}
-        <button type="button" class="clarify-next" id="clarifyNext">${isLast ? 'BUILD &gt;&gt;' : 'NEXT &gt;'}</button>
-      </div>
-    `;
+    renderClarifyFrame({
+      title: `Question ${idx + 1} of ${total}`,
+      subtitle: 'A couple quick choices help tailor the build guide.',
+      progressPct: ((idx + 1) / (total + 1)) * 100,
+      body: `
+        <div class="clarify-progress">${dots}</div>
+        <div class="clarify-question">${esc(q.question)}</div>
+        ${inputHtml}
+      `,
+      footer: `
+        ${idx > 0 ? `<button type="button" class="clarify-back" id="clarifyBack">&lt; GO BACK</button>` : `<span></span>`}
+        <button type="button" class="clarify-next" id="clarifyNext">${isLast ? 'REVIEW BUILD &gt;' : 'NEXT &gt;'}</button>
+      `
+    });
 
     const textInput = gid('clarifyInner').querySelector('.clarify-text-input');
 
@@ -864,6 +1267,45 @@
     }
   }
 
+  function renderClarifySummary() {
+    clarifyStage = 'summary';
+    const total = clarifyQuestions.length;
+    const board = clarifyAnswers.board || 'No preference';
+    const power = clarifyAnswers.power || 'No preference';
+    renderClarifyFrame({
+      title: 'Review before build',
+      subtitle: 'One last check before Mertle generates the full guide.',
+      progressPct: 100,
+      body: `
+        <div class="clarify-summary">
+          <div class="clarify-summary-row">
+            <span class="clarify-summary-label">Prompt</span>
+            <span class="clarify-summary-value">${esc(clarifyOriginalPrompt)}</span>
+          </div>
+          <div class="clarify-summary-row">
+            <span class="clarify-summary-label">Board</span>
+            <span class="clarify-summary-value">${esc(board)}</span>
+          </div>
+          <div class="clarify-summary-row">
+            <span class="clarify-summary-label">Power</span>
+            <span class="clarify-summary-value">${esc(power)}</span>
+          </div>
+          <div class="clarify-summary-row">
+            <span class="clarify-summary-label">Skill level</span>
+            <span class="clarify-summary-value">${esc(getSkill())}</span>
+          </div>
+          <div class="clarify-summary-note">Answered ${total} setup question${total === 1 ? '' : 's'}.</div>
+        </div>
+      `,
+      footer: `
+        <button type="button" class="clarify-back" id="clarifySummaryBack">&lt; GO BACK</button>
+        <button type="button" class="clarify-next clarify-confirm" id="clarifyConfirm">LOOKS GOOD - BUILD IT</button>
+      `
+    });
+    gid('clarifyConfirm')?.addEventListener('click', finishClarify);
+    gid('clarifySummaryBack')?.addEventListener('click', () => renderClarifyQuestion(Math.max(clarifyQuestions.length - 1, 0)));
+  }
+
   function showClarifyOverlay() {
     gid('clarifyBg').classList.add('open');
     renderClarifyQuestion(0);
@@ -871,6 +1313,8 @@
 
   /* ── Core generate (no UI setup — called after UI is ready) ── */
   async function _doGenerate(text, clarifications) {
+    buildNavCleanup();
+    buildNavCleanup = () => {};
     buildOutput.classList.add('active');
     buildOutput.innerHTML = '';
     buildOutput.classList.add('streaming-cursor');
@@ -938,6 +1382,7 @@
       buildOutput.innerHTML = renderMd(accumulated); scrollOut();
       mountWiregenDiagrams();
       mountInstructionBooks();
+      setupBuildNavigation();
       buildOutput.classList.remove('streaming-cursor');
       if (thinkShown) { thinkEl.remove(); thinkShown = false; }
 
@@ -1139,6 +1584,8 @@
     window.downloadCode = downloadCode;
     window.persistTitle = persistTitle;
     window.shopAllOnAmazon = shopAllOnAmazon;
+    window.triggerProjectEdit = focusProjectEdit;
+    window.jumpToBuildSection = jumpToBuildSection;
 
     /* Input handlers */
     chatInput.addEventListener('input', () => { charCount.textContent = `${chatInput.value.length}/300`; });
@@ -1160,8 +1607,10 @@
     };
     new ResizeObserver(updateChatPlaceholder).observe(chatInput);
     updateChatPlaceholder();
-    heroInput.addEventListener('keydown', e => { if (e.key === 'Enter') send(heroInput.value.trim()); });
+    heroInput.addEventListener('input', updateHeroBuildState);
+    heroInput.addEventListener('keydown', e => { if (e.key === 'Enter' && heroInput.value.trim().length >= 10) send(heroInput.value.trim()); });
     heroGo.addEventListener('click', () => send(heroInput.value.trim()));
+    gid('heroExamples').querySelectorAll('.hero-example-chip').forEach(btn => btn.addEventListener('click', () => applyExamplePrompt(btn.dataset.prompt)));
 
     /* Topbar */
     gid('btnNew').addEventListener('click', newSession);
@@ -1173,6 +1622,19 @@
       let g = lastGuide; if (ne) g = g.replace(/^# .+$/m, '# ' + ne.textContent.trim());
       downloadProjectFolder(g, lastPrompt);
       const b = gid('btnExport'); b.classList.add('active'); setTimeout(() => b.classList.remove('active'), 1200);
+    });
+    gid('btnExportPdf').addEventListener('click', exportPdf);
+    gid('btnDownloadMd').addEventListener('click', downloadMarkdownGuide);
+    gid('btnCopyCode').addEventListener('click', async () => {
+      const btn = gid('btnCopyCode');
+      try {
+        await copyAllCodeBlocks();
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = '📋 Copy All Code'; }, 1200);
+      } catch {
+        btn.textContent = 'Copy failed';
+        setTimeout(() => { btn.textContent = '📋 Copy All Code'; }, 1200);
+      }
     });
     gid('btnSettings').addEventListener('click', () => { _settingsTrigger = document.activeElement; openSettings(); });
     gid('btnDelete').addEventListener('click', () => { if (!lastGuide) return; showDeleteConfirm(getProjectName({ guide: lastGuide, prompt: lastPrompt }), lastGuide, () => deleteFromHist(lastTs, null)); });
@@ -1253,6 +1715,7 @@
     renderHist();
     renderHeroRecent();
     checkKey();
+    updateHeroBuildState();
     heroInput.focus();
   });
 </script>
@@ -1284,7 +1747,13 @@
     <div class="hero-desc">Describe any electronics project and get a complete wiring diagram, parts list, and ready-to-flash code — instantly.</div>
     <div class="hero-input-row">
       <input class="hero-input" id="heroInput" type="text" placeholder="e.g. motion-sensing alarm..." autocomplete="new-password" spellcheck="false" maxlength="300" aria-label="Describe your electronics project"/>
-      <button type="button" class="hero-go" id="heroGo">BUILD</button>
+      <button type="button" class="hero-go" id="heroGo" disabled>BUILD</button>
+    </div>
+    <div class="hero-prompt-hint" id="heroPromptHint">Describe your project in at least 10 characters.</div>
+    <div class="hero-examples" id="heroExamples">
+      {#each HERO_EXAMPLES as example}
+        <button type="button" class="hero-example-chip" data-prompt={example}>{example}</button>
+      {/each}
     </div>
     <div class="hero-hint">SELECT SKILL LEVEL</div>
     <div class="hero-skills" id="heroSkills">
@@ -1294,6 +1763,7 @@
       <button type="button" class="hero-skill" data-skill="4">HACKER</button>
       <button type="button" class="hero-skill" data-skill="5">EXPERT</button>
     </div>
+    <div class="hero-skill-help" id="heroSkillHelp">Maximum hand-holding, no experience needed.</div>
     <div class="hero-recent" id="heroRecent"></div>
     <div class="sel-bar" id="heroSelBar">
       <span class="sel-count" id="heroSelCount"></span>
@@ -1355,9 +1825,15 @@
       <section class="output">
         <div class="output-head">
           <span class="pane-label">build output</span>
+          <div class="output-head-actions">
+            <button type="button" class="output-head-btn" id="btnExportPdf">📄 Export PDF</button>
+            <button type="button" class="output-head-btn" id="btnDownloadMd">⬇️ Download Markdown</button>
+            <button type="button" class="output-head-btn" id="btnCopyCode">📋 Copy All Code</button>
+          </div>
           <span class="output-context" id="outputContext"></span>
         </div>
         <div class="output-scroll" id="outputScroll">
+          <div class="loading-feed" id="loadingFeed" hidden></div>
           <div class="empty" id="emptyState">
             <div class="empty-icon"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10"/></svg></div>
             <div class="empty-title">NO BUILD YET</div>
@@ -1420,6 +1896,7 @@
         <button type="button" class="chip" data-skill="4">Hacker</button>
         <button type="button" class="chip" data-skill="5">Expert</button>
       </div>
+      <div class="modal-hint" id="skillHelpModal">Maximum hand-holding, no experience needed.</div>
     </div>
     <div class="modal-divider"></div>
     <div class="modal-section">
