@@ -3,7 +3,7 @@
   import WiringCanvas from '$lib/wiregen/WiringCanvas.svelte';
   import InstructionBook from '$lib/InstructionBook.svelte';
   import { mount, unmount } from 'svelte';
-  import { extractStepGroups, stripMarkdown, summarizeSupport, validateDiagram, repairGuide } from '$lib/projectSupport.js';
+  import { extractStepGroups, stripMarkdown, summarizeSupport, repairGuide } from '$lib/projectSupport.js';
 
   /* ── Shared SVG icons ── */
   const ICON_TRASH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2 0 0,1-2,2H8a2,2 0 0,1-2-2L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4a1,1 0 0,1,1-1h4a1,1 0 0,1,1,1v2"/></svg>';
@@ -48,6 +48,41 @@
     { key: 'parts', label: 'Parts' },
     { key: 'code', label: 'Code' },
     { key: 'steps', label: 'Steps' }
+  ];
+  const PART_COST_RULES = [
+    { re: /\b(arduino uno|uno r3)\b/, low: 12, high: 28 },
+    { re: /\b(arduino nano|nano every)\b/, low: 8, high: 20 },
+    { re: /\b(esp32)\b/, low: 8, high: 16 },
+    { re: /\b(esp8266|nodemcu|wemos d1 mini)\b/, low: 5, high: 12 },
+    { re: /\b(raspberry pi pico|pico w)\b/, low: 5, high: 12 },
+    { re: /\b(breadboard)\b/, low: 4, high: 9 },
+    { re: /\b(jumper|dupont)\b/, low: 3, high: 7 },
+    { re: /\b(ws2812|neopixel|led strip|rgb strip)\b/, low: 10, high: 24 },
+    { re: /\b(led|rgb led)\b/, low: 0.15, high: 0.6 },
+    { re: /\b(resistor)\b/, low: 0.08, high: 0.3 },
+    { re: /\b(button|pushbutton|tactile switch)\b/, low: 0.2, high: 1 },
+    { re: /\b(buzzer|piezo)\b/, low: 1, high: 4 },
+    { re: /\b(servo)\b/, low: 4, high: 14 },
+    { re: /\b(stepper motor)\b/, low: 9, high: 22 },
+    { re: /\b(dc motor|gear motor)\b/, low: 3, high: 10 },
+    { re: /\b(motor driver|l298n|drv8833|a4988)\b/, low: 4, high: 12 },
+    { re: /\b(relay)\b/, low: 3, high: 8 },
+    { re: /\b(ultrasonic|hc-sr04)\b/, low: 2, high: 5 },
+    { re: /\b(pir|motion sensor)\b/, low: 3, high: 8 },
+    { re: /\b(dht11|dht22|bme280|bmp280|temperature sensor|humidity sensor)\b/, low: 2, high: 10 },
+    { re: /\b(soil moisture)\b/, low: 2, high: 6 },
+    { re: /\b(lcd|1602|20x4)\b/, low: 6, high: 14 },
+    { re: /\b(oled|ssd1306|display)\b/, low: 5, high: 14 },
+    { re: /\b(potentiometer|pot)\b/, low: 0.5, high: 2 },
+    { re: /\b(transistor|mosfet)\b/, low: 0.2, high: 3 },
+    { re: /\b(diode)\b/, low: 0.08, high: 0.5 },
+    { re: /\b(capacitor)\b/, low: 0.1, high: 1 },
+    { re: /\b(sensor)\b/, low: 3, high: 10 },
+    { re: /\b(module)\b/, low: 4, high: 12 },
+    { re: /\b(battery|18650|9v|lipo)\b/, low: 5, high: 18 },
+    { re: /\b(power supply|adapter|usb cable|barrel jack)\b/, low: 4, high: 15 },
+    { re: /\b(switch)\b/, low: 0.5, high: 3 },
+    { re: /\b(enclosure|case|project box)\b/, low: 6, high: 18 }
   ];
 
   function classifyAction(text) {
@@ -116,6 +151,8 @@
   let loadingStepTimers = [];
   let loadingProgressFrame = null;
   let loadingHideTimer = null;
+  let loadingNoteTimer = null;
+  let loadingChatMsg = null;
   let buildNavCleanup = () => {};
 
   /* ── Clarify state ── */
@@ -239,6 +276,99 @@
   function getCurrentProjectTitle() {
     return buildOutput?.querySelector('.project-name')?.textContent?.trim() || 'mertle-project';
   }
+  function extractQuantity(part = '') {
+    const match = part.trim().match(/^(\d+)\s*(x|×)\b/i) || part.trim().match(/^(\d+)\s+(pcs?|pieces?)\b/i);
+    return match ? Math.max(1, Number(match[1]) || 1) : 1;
+  }
+  function estimatePartCost(parts = []) {
+    let low = 0;
+    let high = 0;
+    let matched = 0;
+    parts.forEach((part) => {
+      const qty = Math.min(extractQuantity(part), 8);
+      const normalized = part.toLowerCase();
+      const rule = PART_COST_RULES.find(({ re }) => re.test(normalized));
+      if (rule) {
+        low += rule.low * qty;
+        high += rule.high * qty;
+        matched += 1;
+      } else {
+        low += 2 * qty;
+        high += 8 * qty;
+      }
+    });
+    if (!parts.length) return null;
+    if (!matched) {
+      low = Math.max(low, 12);
+      high = Math.max(high, 24);
+    }
+    return {
+      low: Math.round(low),
+      high: Math.max(Math.round(high), Math.round(low) + 4)
+    };
+  }
+  function estimateBuildTime(parts = [], steps = [], raw = '', title = '') {
+    const stepCount = steps.length;
+    const partCount = parts.length;
+    const text = `${title}\n${raw}`.toLowerCase();
+    let low = 20 + (stepCount * 4) + (partCount * 3);
+    let high = 35 + (stepCount * 7) + (partCount * 5);
+    if (/\b(solder|heat.?shrink|perfboard)\b/.test(text)) { low += 25; high += 50; }
+    if (/\b(enclosure|mount|drill|cut|glue|3d print)\b/.test(text)) { low += 15; high += 35; }
+    if (/\b(calibrate|tune|debug|trim|adjust|test)\b/.test(text)) { low += 10; high += 20; }
+    if (/\b(servo|motor|relay|display|wifi|wireless|weather station|lock)\b/.test(text)) { low += 10; high += 25; }
+    return { low, high: Math.max(high, low + 15) };
+  }
+  function formatCurrencyRange(range) {
+    if (!range) return 'TBD';
+    if (range.high - range.low <= 3) return `$${range.low}`;
+    return `$${range.low}-$${range.high}`;
+  }
+  function formatDuration(minutes) {
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    const rem = minutes % 60;
+    return rem < 10 ? `${hours} hr` : `${hours} hr ${rem} min`;
+  }
+  function formatDurationRange(range) {
+    if (!range) return 'TBD';
+    return `${formatDuration(range.low)}-${formatDuration(range.high)}`;
+  }
+  function renderBuildEstimates(parts = [], steps = [], raw = '', title = '', skill = getRenderedSkill()) {
+    const cost = estimatePartCost(parts);
+    const time = estimateBuildTime(parts, steps, raw, title);
+    return `
+      <div class="build-meta">
+        <div class="build-meta-group">
+          <span class="build-meta-label">Build mode</span>
+          <span class="build-meta-pill" data-meta="skill">${esc(normalizeSkillLabel(skill))}</span>
+        </div>
+        <div class="build-meta-group">
+          <span class="build-meta-label">Est. parts cost</span>
+          <span class="build-meta-pill" data-meta="cost">${esc(formatCurrencyRange(cost))}</span>
+        </div>
+        <div class="build-meta-group">
+          <span class="build-meta-label">Est. build time</span>
+          <span class="build-meta-pill" data-meta="time">${esc(formatDurationRange(time))}</span>
+        </div>
+      </div>
+    `;
+  }
+  function extractPartsFromGuide(raw = '') {
+    const lines = raw.split('\n');
+    let inParts = false;
+    const parts = [];
+    for (const line of lines) {
+      if (/^##\s+/i.test(line)) {
+        inParts = /^##\s+parts\b/i.test(line.trim());
+        continue;
+      }
+      if (!inParts) continue;
+      if (/^[-*]\s+/.test(line)) parts.push(line.replace(/^[-*]\s+/, '').trim());
+      else if (/^#/.test(line)) inParts = false;
+    }
+    return parts;
+  }
   function getBuildMarkdown() {
     if (!buildOutput) return '';
     const title = getCurrentProjectTitle();
@@ -258,6 +388,11 @@
       try { return JSON.parse(mount.dataset.steps || '[]'); } catch { return []; }
     });
     const lines = [`# ${title}`, '', `Skill Level: ${normalizeSkillLabel(getRenderedSkill())}`, ''];
+    const costText = buildOutput.querySelector('.build-meta-pill[data-meta="cost"]')?.textContent?.trim();
+    const timeText = buildOutput.querySelector('.build-meta-pill[data-meta="time"]')?.textContent?.trim();
+    if (costText) lines.push(`Estimated Parts Cost: ${costText}`);
+    if (timeText) lines.push(`Estimated Build Time: ${timeText}`);
+    if (costText || timeText) lines.push('');
     if (description) lines.push('## Description', '', description, '');
     if (parts.length) lines.push('## Parts', '', ...parts.map((part) => `- ${part}`), '');
     if (codes.length) {
@@ -732,13 +867,43 @@
     w.appendChild(l); w.appendChild(t); chatLog.appendChild(w); scrollChat();
     return w;
   }
+  function setBotMsgBody(wrapper, html) {
+    const body = wrapper?.querySelector('.msg-body');
+    if (body) body.innerHTML = html;
+    scrollChat();
+  }
+  function renderChatLoadingMirror() {
+    if (!loadingChatMsg) return;
+    const activeLabel = loadingStepIndex >= 0 && loadingStepIndex < BUILD_STATUS_STEPS.length
+      ? BUILD_STATUS_STEPS[loadingStepIndex]
+      : 'Preparing your guide...';
+    const note = loadingProgress > 92
+      ? 'Taking a little longer than usual. Still working through the full guide.'
+      : 'I’ll drop the full wiring, parts, code, and steps here as soon as they’re ready.';
+    setBotMsgBody(loadingChatMsg, `
+      <div class="chat-build-status">
+        <div class="chat-build-label">CURRENT STEP</div>
+        <div class="chat-build-step">${esc(activeLabel)}</div>
+        <div class="chat-build-note">${esc(note)}</div>
+      </div>
+    `);
+  }
 
   function renderLoadingFeed() {
     const feed = gid('loadingFeed');
     if (!feed) return;
+    const activeLabel = loadingStepIndex >= 0 && loadingStepIndex < BUILD_STATUS_STEPS.length
+      ? BUILD_STATUS_STEPS[loadingStepIndex]
+      : 'Preparing your guide...';
+    const note = loadingProgress > 92
+      ? 'Still polishing the response. Long builds usually mean more wiring/code detail is being assembled.'
+      : 'Mertle is turning your prompt into a complete project guide with hardware, firmware, and instructions.';
     feed.innerHTML = `
       <div class="loading-feed-card">
         <div class="loading-feed-title">BUILDING YOUR PROJECT</div>
+        <div class="loading-feed-subtitle">Live generation status</div>
+        <div class="loading-feed-active">${esc(activeLabel)}</div>
+        <div class="loading-feed-note">${esc(note)}</div>
         <div class="loading-feed-list">
           ${BUILD_STATUS_STEPS.map((step, idx) => {
             const state = idx < loadingStepIndex ? 'done' : idx === loadingStepIndex ? 'active' : 'pending';
@@ -755,6 +920,7 @@
         </div>
       </div>
     `;
+    renderChatLoadingMirror();
   }
 
   function clearLoadingFeedTimers() {
@@ -764,6 +930,8 @@
     loadingProgressFrame = null;
     if (loadingHideTimer) clearTimeout(loadingHideTimer);
     loadingHideTimer = null;
+    if (loadingNoteTimer) clearTimeout(loadingNoteTimer);
+    loadingNoteTimer = null;
   }
 
   function tickLoadingProgress() {
@@ -782,6 +950,7 @@
     loadingProgress = 4;
     loadingStartTs = performance.now();
     feed.hidden = false;
+    loadingChatMsg = addMsg('Starting your build...', 'bot');
     renderLoadingFeed();
     BUILD_STATUS_STEPS.slice(1).forEach((_, offset) => {
       const timer = setTimeout(() => {
@@ -791,6 +960,11 @@
       }, 1200 + offset * 1100);
       loadingStepTimers.push(timer);
     });
+    loadingNoteTimer = setTimeout(() => {
+      if (!generating) return;
+      loadingProgress = Math.max(loadingProgress, 93);
+      renderLoadingFeed();
+    }, 8500);
     loadingProgressFrame = requestAnimationFrame(tickLoadingProgress);
   }
 
@@ -801,6 +975,10 @@
     loadingStepIndex = BUILD_STATUS_STEPS.length;
     loadingProgress = 100;
     renderLoadingFeed();
+    if (loadingChatMsg) {
+      setBotMsgBody(loadingChatMsg, '<div class="chat-build-status"><div class="chat-build-label">READY</div><div class="chat-build-step">Your guide is here.</div><div class="chat-build-note">Scroll the build pane to review the output.</div></div>');
+      loadingChatMsg = null;
+    }
     loadingHideTimer = setTimeout(() => {
       feed.hidden = true;
     }, 380);
@@ -935,11 +1113,13 @@
   }
 
   function renderMd(raw) {
+    const estimatedParts = extractPartsFromGuide(raw);
+    const estimatedSteps = parseStepsFromGuide(raw);
     let html = '';
     const lines = raw.split('\n');
     let inCode = false, codeLang = '', code = '', inUl = false, inOl = false, sec = '';
     let partsInSection = [];
-    let stepBuffer = [], lastDiagramJson = '', title = '';
+    let stepBuffer = [], title = '';
     let currentSectionKey = '', sectionOpen = false, sectionHasDiagram = false;
     lastPartsForAmazon = [];
     function closeSection() {
@@ -965,14 +1145,12 @@
         } else { html += '</ul>'; }
         inUl = false;
       }
-        if (inOl) {
+      if (inOl) {
           if (stepBuffer.length) {
             const stepsJson = JSON.stringify(stepBuffer)
               .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-            const diagJson = lastDiagramJson
-              .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
             const projectId = hashString((title || 'project') + '|' + raw);
-            html += '<div class="instruction-book-mount" data-project-id="' + projectId + '" data-steps="' + stepsJson + '" data-diagram="' + diagJson + '"></div>';
+            html += '<div class="instruction-book-mount" data-project-id="' + projectId + '" data-steps="' + stepsJson + '"></div>';
             stepBuffer = [];
           } else {
             html += '</div>';
@@ -986,7 +1164,6 @@
         if (inCode) {
           if (codeLang === 'wiregen') {
             const jsonStr = code.trim();
-            lastDiagramJson = jsonStr;
             sectionHasDiagram = true;
             const escaped = jsonStr.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
             html += '<div class="wiregen-mount" data-diagram="' + escaped + '"></div>';
@@ -1002,10 +1179,9 @@
       if (line.startsWith('# ')) {
         cl();
         title = line.slice(2).trim();
-        const skillMeta = normalizeSkillLabel(getRenderedSkill());
         html += '<div class="build-edit-bar"><button type="button" class="edit-project-btn" onclick="triggerProjectEdit()"><span class="edit-project-icon" aria-hidden="true"></span>EDIT THIS PROJECT</button><div class="build-edit-copy">Jump back to the conversation and ask for a revision.</div></div>';
         html += '<div class="project-name" contenteditable="true" spellcheck="false" onblur="persistTitle(this)">' + inlineFmt(esc(title)) + '</div><div class="project-name-hint">click to rename</div>';
-        html += '<div class="build-meta"><span class="build-meta-label">Build mode</span><span class="build-meta-pill">' + esc(skillMeta) + '</span></div>';
+        html += renderBuildEstimates(estimatedParts, estimatedSteps, raw, title, getRenderedSkill());
         html += renderBuildNav();
         openSection('overview');
         html += renderProjectPreview(title, raw);
@@ -1081,8 +1257,6 @@
       el.dataset.mounted = '1';
       try {
         const diagram = JSON.parse(el.dataset.diagram);
-        const validation = validateDiagram(diagram);
-        if (!validation.ok) throw new Error(validation.issues[0] || 'Unsupported diagram');
         const inst = mount(WiringCanvas, { target: el, props: { diagram } });
         _wiregenInstances.push(inst);
       } catch (err) {
@@ -1107,17 +1281,8 @@
           el.dataset.steps
             .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"')
         );
-        let diagram = null;
-        const diagRaw = el.dataset.diagram;
-        if (diagRaw) {
-          try {
-            diagram = JSON.parse(
-              diagRaw.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"')
-            );
-          } catch { /* diagram is optional */ }
-        }
         const projectId = el.dataset.projectId || hashString(JSON.stringify(steps));
-        const inst = mount(InstructionBook, { target: el, props: { steps, diagram, projectId } });
+        const inst = mount(InstructionBook, { target: el, props: { steps, projectId } });
         _instructionBookInstances.push(inst);
       } catch (err) {
         el.innerHTML = '<p style="color:var(--hi);font-size:12px;">Instruction book error: ' + esc(err.message) + '</p>';
@@ -1133,6 +1298,7 @@
     chatInput.disabled = on;
     chatPane?.classList.toggle('generating', on);
     workspace?.classList.toggle('is-generating', on);
+    document.querySelectorAll('.output-head-btn').forEach((btn) => btn.classList.toggle('muted-during-build', on));
     if (on) {
       statusDot.classList.add('active');
       let d = 0; statusText.textContent = 'BUILDING';
@@ -1142,6 +1308,10 @@
       statusDot.classList.remove('active');
       clearInterval(statusInterval); statusText.textContent = 'READY';
       finishLoadingFeed();
+      if (loadingChatMsg) {
+        loadingChatMsg.remove();
+        loadingChatMsg = null;
+      }
       chatInput.focus();
     }
   }
@@ -1485,23 +1655,102 @@
     await _doGenerate(text, typeof clarifications === 'string' ? clarifications : null);
   }
 
+  function buildSimProgressCard() {
+    const card = document.createElement('div');
+    card.className = 'sim-progress';
+    card.innerHTML = `
+      <div class="sim-progress-head">
+        <span class="sim-progress-title">SIMULATION</span>
+        <span class="sim-progress-percent">0%</span>
+      </div>
+      <div class="sim-progress-bar" aria-hidden="true">
+        <div class="sim-progress-fill"></div>
+      </div>
+      <div class="sim-progress-status">Waiting to start...</div>
+    `;
+    return {
+      card,
+      percent: card.querySelector('.sim-progress-percent'),
+      fill: card.querySelector('.sim-progress-fill'),
+      status: card.querySelector('.sim-progress-status')
+    };
+  }
+
+  function updateSimProgress(progressUi, progress = 0, message = 'Working...') {
+    const pct = Math.max(0, Math.min(100, Math.round(progress)));
+    progressUi.percent.textContent = `${pct}%`;
+    progressUi.fill.style.width = `${pct}%`;
+    progressUi.status.textContent = message;
+  }
+
+  async function readSimulationStream(res, onEvent) {
+    if (!res.body) throw new Error('Streaming not supported');
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    function parseLine(line) {
+      if (!line.startsWith('data: ')) return null;
+      const data = line.slice(6).trim();
+      if (!data || data === '[DONE]') return null;
+      return JSON.parse(data);
+    }
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        const payload = parseLine(line);
+        if (payload) onEvent(payload);
+      }
+    }
+
+    if (buf.trim()) {
+      const payload = parseLine(buf);
+      if (payload) onEvent(payload);
+    }
+  }
+
   /* ── Simulate ── */
   function addSimBtn() {
     const btn = document.createElement('button'); btn.classList.add('sim-btn'); btn.innerHTML = 'SIMULATE &gt;&gt;';
     btn.addEventListener('click', async () => {
-      btn.disabled = true; btn.textContent = 'GENERATING SIM...';
+      btn.disabled = true;
+      btn.textContent = 'GENERATING SIM...';
+      const progressUi = buildSimProgressCard();
+      buildOutput.appendChild(progressUi.card);
+      scrollOut();
       try {
         const res = await fetch('/api/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: lastPrompt, guide: lastGuide }) });
         if (!res.ok) { const { error } = await res.json(); throw new Error(error); }
-        const result = await res.json();
-        if (result.unsupported) {
+
+        let result = null;
+        await readSimulationStream(res, (payload) => {
+          if (payload.error) throw new Error(payload.error);
+          if (payload.unsupported) {
+            result = payload;
+            updateSimProgress(progressUi, payload.progress ?? 100, payload.message || 'Simulation unavailable.');
+            return;
+          }
+          updateSimProgress(progressUi, payload.progress ?? 0, payload.message || 'Working...');
+          if (payload.done) result = payload;
+        });
+
+        if (result?.unsupported) {
+          progressUi.card.remove();
           addMsg(`Simulation not available — this project uses parts Wokwi doesn't support: ${result.reason}`, 'bot');
-          btn.innerHTML = 'SIMULATE &gt;&gt;'; btn.disabled = false;
+          btn.innerHTML = 'SIMULATE &gt;&gt;';
+          btn.disabled = false;
           return;
         }
-        const { embedUrl, projectUrl } = result;
+
+        const { embedUrl, projectUrl } = result || {};
         if (!embedUrl?.startsWith('https://wokwi.com/') || !projectUrl?.startsWith('https://wokwi.com/')) throw new Error('Invalid simulation URL');
         btn.remove();
+        updateSimProgress(progressUi, 100, 'Simulation ready.');
         const fc = document.createElement('div'); fc.classList.add('sim-frame-container');
         const fr = document.createElement('iframe'); fr.classList.add('sim-frame'); fr.src = embedUrl; fr.setAttribute('allowfullscreen', '');
         fc.appendChild(fr); buildOutput.appendChild(fc);
@@ -1509,7 +1758,12 @@
         const lt = document.createTextNode('open full editor \u2192 ');
         const la = document.createElement('a'); la.href = projectUrl; la.target = '_blank'; la.rel = 'noopener noreferrer'; la.textContent = projectUrl;
         lk.appendChild(lt); lk.appendChild(la); buildOutput.appendChild(lk); scrollOut();
-      } catch (e) { btn.innerHTML = 'SIMULATE &gt;&gt;'; btn.disabled = false; addMsg('Sim error: ' + e.message, 'bot'); }
+      } catch (e) {
+        progressUi.card.remove();
+        btn.innerHTML = 'SIMULATE &gt;&gt;';
+        btn.disabled = false;
+        addMsg('Sim error: ' + e.message, 'bot');
+      }
     });
     buildOutput.appendChild(btn); scrollOut();
   }
