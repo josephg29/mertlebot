@@ -192,6 +192,147 @@ function cloneDiagram(diagram) {
   return JSON.parse(JSON.stringify(diagram));
 }
 
+function nearestPointIndex(path = [], target) {
+  let bestIndex = -1;
+  let bestDistance = Infinity;
+  for (const [index, point] of path.entries()) {
+    const d = distance(point, target);
+    if (d < bestDistance) {
+      bestDistance = d;
+      bestIndex = index;
+    }
+  }
+  return { index: bestIndex, distance: bestDistance };
+}
+
+function snapPathPoint(path, index, pos) {
+  if (index < 0 || index >= path.length || !pos) return false;
+  const [x, y] = path[index];
+  if (x === pos.x && y === pos.y) return false;
+  path[index] = [pos.x, pos.y];
+  return true;
+}
+
+function chooseBoardTarget(diagram, wire, start, end) {
+  const labeledBoardPin = normalizePinToken(diagram.board.type, wire.label || '');
+  if (labeledBoardPin && BOARD_PIN_SET[diagram.board.type]?.has(labeledBoardPin)) {
+    const position = resolvePin(diagram.board.x, diagram.board.y, diagram.board.type, labeledBoardPin);
+    const startDist = distance(start, position);
+    const endDist = distance(end, position);
+    return {
+      name: labeledBoardPin,
+      position,
+      startDist,
+      endDist,
+      source: 'label',
+    };
+  }
+
+  const nearestStartPin = nearestBoardPin(diagram, start);
+  const nearestEndPin = nearestBoardPin(diagram, end);
+  const options = [nearestStartPin, nearestEndPin].filter(Boolean).sort((a, b) => a.distance - b.distance);
+  if (!options.length) return null;
+  const best = options[0];
+  return {
+    name: best.name,
+    position: best.position,
+    startDist: nearestStartPin?.distance ?? Infinity,
+    endDist: nearestEndPin?.distance ?? Infinity,
+    source: 'proximity',
+  };
+}
+
+function chooseComponentTarget(diagram, start, end) {
+  const nearestStartComp = nearestComponentPin(diagram, start);
+  const nearestEndComp = nearestComponentPin(diagram, end);
+  const options = [nearestStartComp, nearestEndComp].filter(Boolean).sort((a, b) => a.distance - b.distance);
+  if (!options.length) return null;
+  const best = options[0];
+  return {
+    componentId: best.componentId,
+    pin: best.pin,
+    position: best.position,
+    startDist: nearestStartComp?.distance ?? Infinity,
+    endDist: nearestEndComp?.distance ?? Infinity,
+  };
+}
+
+function repairDiagram(diagram) {
+  const repaired = cloneDiagram(diagram);
+  let changed = false;
+  const boardSnapTolerance = 140;
+  const componentSnapTolerance = 140;
+
+  for (const [index, wire] of (repaired.wires || []).entries()) {
+    const start = wire.path[0];
+    const end = wire.path[wire.path.length - 1];
+    if (!start || !end) continue;
+
+    const startRole = findEndpointRole(repaired, start, index);
+    const endRole = findEndpointRole(repaired, end, index);
+    const boardTarget = chooseBoardTarget(repaired, wire, start, end);
+    const componentTarget = chooseComponentTarget(repaired, start, end);
+
+    let boardEndpoint = startRole.board ? 'start' : endRole.board ? 'end' : null;
+    let componentEndpoint = startRole.comp ? 'start' : endRole.comp ? 'end' : null;
+
+    if (!boardEndpoint && boardTarget) {
+      if (Math.min(boardTarget.startDist, boardTarget.endDist) <= boardSnapTolerance) {
+        boardEndpoint = boardTarget.startDist <= boardTarget.endDist ? 'start' : 'end';
+      }
+    }
+    if (!componentEndpoint && componentTarget) {
+      if (Math.min(componentTarget.startDist, componentTarget.endDist) <= componentSnapTolerance) {
+        componentEndpoint = componentTarget.startDist <= componentTarget.endDist ? 'start' : 'end';
+      }
+    }
+
+    if (boardEndpoint && componentEndpoint && boardEndpoint === componentEndpoint) {
+      const other = boardEndpoint === 'start' ? 'end' : 'start';
+      const otherDist = other === 'start'
+        ? Math.min(boardTarget?.startDist ?? Infinity, componentTarget?.startDist ?? Infinity)
+        : Math.min(boardTarget?.endDist ?? Infinity, componentTarget?.endDist ?? Infinity);
+      if (otherDist < Infinity) {
+        if (!boardTarget || !componentTarget) {
+          componentEndpoint = other;
+        } else if ((boardEndpoint === 'start' ? boardTarget.startDist : boardTarget.endDist) <= (componentEndpoint === 'start' ? componentTarget.startDist : componentTarget.endDist)) {
+          componentEndpoint = other;
+        } else {
+          boardEndpoint = other;
+        }
+      }
+    }
+
+    if (!boardEndpoint && componentEndpoint) boardEndpoint = componentEndpoint === 'start' ? 'end' : 'start';
+    if (!componentEndpoint && boardEndpoint) componentEndpoint = boardEndpoint === 'start' ? 'end' : 'start';
+
+    if (boardTarget && boardEndpoint) {
+      const pointIndex = boardEndpoint === 'start' ? 0 : wire.path.length - 1;
+      changed = snapPathPoint(wire.path, pointIndex, boardTarget.position) || changed;
+    }
+
+    if (componentTarget && componentEndpoint) {
+      const pointIndex = componentEndpoint === 'start' ? 0 : wire.path.length - 1;
+      changed = snapPathPoint(wire.path, pointIndex, componentTarget.position) || changed;
+    }
+
+    if (wire.path.length > 2) {
+      if (boardTarget) {
+        const boardPoint = boardEndpoint === 'start' ? wire.path[0] : wire.path[wire.path.length - 1];
+        const nearBoard = nearestPointIndex(wire.path, boardTarget.position);
+        if (nearBoard.distance <= 20) changed = snapPathPoint(wire.path, nearBoard.index, { x: boardPoint[0], y: boardPoint[1] }) || changed;
+      }
+      if (componentTarget) {
+        const compPoint = componentEndpoint === 'start' ? wire.path[0] : wire.path[wire.path.length - 1];
+        const nearComp = nearestPointIndex(wire.path, componentTarget.position);
+        if (nearComp.distance <= 20) changed = snapPathPoint(wire.path, nearComp.index, { x: compPoint[0], y: compPoint[1] }) || changed;
+      }
+    }
+  }
+
+  return { diagram: repaired, changed };
+}
+
 function describeComponent(comp) {
   return comp?.props?.label || comp?.type || 'component';
 }
@@ -235,40 +376,7 @@ export function repairGuide(guide) {
     return guide;
   }
 
-  const repaired = cloneDiagram(diagram);
-  let changed = false;
-  for (const [index, wire] of repaired.wires.entries()) {
-    const start = wire.path[0];
-    const end = wire.path[wire.path.length - 1];
-    const startRole = findEndpointRole(repaired, start, index);
-    const endRole = findEndpointRole(repaired, end, index);
-    const labeledBoardPin = normalizePinToken(repaired.board.type, wire.label || '');
-
-    if (labeledBoardPin && BOARD_PIN_SET[repaired.board.type]?.has(labeledBoardPin)) {
-      const labeledPos = resolvePin(repaired.board.x, repaired.board.y, repaired.board.type, labeledBoardPin);
-      const startDist = distance(start, labeledPos);
-      const endDist = distance(end, labeledPos);
-      if (((startRole.board && startRole.board.name !== labeledBoardPin) || (!startRole.board && !startRole.comp && !startRole.wireTouch)) && startDist <= 120 && startDist <= endDist) {
-        wire.path[0] = [labeledPos.x, labeledPos.y];
-        changed = true;
-      } else if (((endRole.board && endRole.board.name !== labeledBoardPin) || (!endRole.board && !endRole.comp && !endRole.wireTouch)) && endDist <= 120 && endDist < startDist) {
-        wire.path[wire.path.length - 1] = [labeledPos.x, labeledPos.y];
-        changed = true;
-      }
-    }
-
-    const currentStartRole = findEndpointRole(repaired, wire.path[0], index);
-    const currentEndRole = findEndpointRole(repaired, wire.path[wire.path.length - 1], index);
-    if (currentStartRole.board && !currentEndRole.comp && !currentEndRole.wireTouch && currentEndRole.nearestComp?.distance <= 120) {
-      const pos = currentEndRole.nearestComp.position;
-      wire.path[wire.path.length - 1] = [pos.x, pos.y];
-      changed = true;
-    } else if (currentEndRole.board && !currentStartRole.comp && !currentStartRole.wireTouch && currentStartRole.nearestComp?.distance <= 120) {
-      const pos = currentStartRole.nearestComp.position;
-      wire.path[0] = [pos.x, pos.y];
-      changed = true;
-    }
-  }
+  const { diagram: repaired, changed } = repairDiagram(diagram);
 
   if (!changed) return guide;
   const repairedJson = JSON.stringify(repaired, null, 2);
@@ -499,7 +607,7 @@ export function summarizeSupport(guide) {
   let boardPinsInDiagram = new Set();
   if (wiregenBlocks[0]) {
     try {
-      diagram = JSON.parse(wiregenBlocks[0]);
+      diagram = repairDiagram(JSON.parse(wiregenBlocks[0])).diagram;
       diagramValidation = validateDiagram(diagram);
       if (diagramValidation.ok) boardPinsInDiagram = extractBoardPinsFromDiagram(diagram);
     } catch (error) {
