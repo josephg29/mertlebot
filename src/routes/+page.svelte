@@ -3,7 +3,7 @@
   import WiringCanvas from '$lib/wiregen/WiringCanvas.svelte';
   import InstructionBook from '$lib/InstructionBook.svelte';
   import { mount, unmount } from 'svelte';
-  import { extractStepGroups, stripMarkdown, summarizeSupport, repairGuide } from '$lib/projectSupport.js';
+  import { extractStepGroups, stripMarkdown, summarizeSupport, repairGuide, SIM_SUPPORTED_COMPONENT_TYPES } from '$lib/projectSupport.js';
 
   /* ── Shared SVG icons ── */
   const ICON_TRASH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2 0 0,1-2,2H8a2,2 0 0,1-2-2L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4a1,1 0 0,1,1-1h4a1,1 0 0,1,1,1v2"/></svg>';
@@ -405,8 +405,36 @@
     return lines.join('\n').trim() + '\n';
   }
   function exportPdf() {
-    if (!lastGuide && !buildOutput?.innerHTML.trim()) return;
-    window.print();
+    const guide = lastGuide;
+    if (!guide) return;
+    const title = getCurrentProjectTitle() || 'Mertle Project';
+    const escaped = guide
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const printHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>${title}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Courier New', Courier, monospace; font-size: 11pt; color: #111; background: #fff; padding: 20mm 18mm; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 18pt; margin-bottom: 6pt; border-bottom: 2px solid #111; padding-bottom: 4pt; }
+  h2 { font-size: 13pt; margin: 14pt 0 5pt; border-bottom: 1px solid #ccc; padding-bottom: 2pt; text-transform: uppercase; letter-spacing: 1px; }
+  pre { background: #f4f4f4; border: 1px solid #ccc; padding: 10pt; font-size: 9.5pt; white-space: pre-wrap; word-break: break-all; margin: 6pt 0; }
+  li { margin: 3pt 0 3pt 18pt; }
+  p { margin: 4pt 0; line-height: 1.5; }
+  @media print { body { padding: 12mm 12mm; } @page { margin: 10mm; } }
+</style>
+</head>
+<body>
+<pre>${escaped}</pre>
+<script>window.onload = () => { window.print(); }<\/script>
+</body>
+</html>`;
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.write(printHtml);
+    win.document.close();
   }
   function downloadMarkdownGuide() {
     const markdown = getBuildMarkdown();
@@ -501,7 +529,7 @@
     outputContext.textContent = normalizeSkillLabel(lastSkill || item.skill || getSkill());
     chatInput.value = ''; charCount.textContent = '0/300';
     gid('btnDelete').style.display = '';
-    if (support.canSimulate) addSimBtn();
+    addSimActions(support);
     scrollOut();
     return true;
   }
@@ -1488,6 +1516,7 @@
 
   /* ── Core generate (no UI setup — called after UI is ready) ── */
   async function _doGenerate(text, clarifications) {
+    const isRevision = !!lastGuide;
     buildNavCleanup();
     buildNavCleanup = () => {};
     buildOutput.classList.add('active');
@@ -1546,7 +1575,7 @@
         const { done, value } = await reader.read(); if (done) break;
         buf += dec.decode(value, { stream: true });
         const bl = buf.split('\n'); buf = bl.pop();
-        for (const b of bl) { const p = parseLine(b); if (!p) continue; if (p.error) { err2 = p.error; continue; } if (p.t) { accumulated += p.t; if (!typeTimer) startTyping(); } }
+        for (const b of bl) { const p = parseLine(b); if (!p) continue; if (p.error) { err2 = p.error; continue; } if (p.replacing) { accumulated = ''; displayed = 0; stopTyping(); buildOutput.innerHTML = ''; continue; } if (p.t) { if (thinkShown) { thinkEl.remove(); thinkShown = false; } accumulated += p.t; if (!typeTimer) startTyping(); } }
       }
       if (buf.trim()) { const p = parseLine(buf); if (p) { if (p.error) err2 = p.error; else if (p.t) { accumulated += p.t; } } }
       stopTyping(); displayed = accumulated.length;
@@ -1568,8 +1597,8 @@
         lastPrompt = text; lastGuide = accumulated; lastSkill = getSkill();
         lastTs = addHist(text, lastSkill, accumulated); gid('btnDelete').style.display = '';
         outputContext.textContent = normalizeSkillLabel(lastSkill);
-        addMsg('Build guide ready. You can ask me to edit it.', 'bot');
-        if (support.canSimulate) addSimBtn();
+        addMsg(isRevision ? 'Updated. Ask me to change anything.' : 'Build guide ready. You can ask me to edit it.', 'bot');
+        addSimActions(support);
       }
     } catch (err) {
       stopTyping(); buildOutput.classList.remove('streaming-cursor');
@@ -1715,6 +1744,18 @@
   }
 
   /* ── Simulate ── */
+  function addSimActions(support) {
+    if (support.canSimulate) {
+      addSimBtn();
+    } else if (support.supportedDiagram && support.simulationBlockers?.length) {
+      const note = document.createElement('p');
+      note.className = 'sim-note';
+      const blockers = support.simulationBlockers;
+      note.textContent = `Simulation unavailable: ${blockers.join(', ')} ${blockers.length === 1 ? 'is' : 'are'} not supported in Wokwi.`;
+      buildOutput.appendChild(note);
+    }
+  }
+
   function addSimBtn() {
     const btn = document.createElement('button'); btn.classList.add('sim-btn'); btn.innerHTML = 'SIMULATE &gt;&gt;';
     btn.addEventListener('click', async () => {
@@ -2140,11 +2181,14 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
     <div class="modal-title" id="settingsModalTitle">SETTINGS</div>
     <div class="modal-section">
-      <div class="modal-label">API Key</div>
-      <div class="modal-input-row"><input class="modal-input" id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off"/></div>
-      <button type="button" class="modal-btn" id="saveKeyBtn">SAVE KEY</button>
+      <div class="modal-label">Anthropic API Key</div>
+      <div class="modal-hint" style="margin-bottom:10px;line-height:1.5">mertle.bot uses the Claude API to generate build guides. Your key is stored only on this machine and sent only to Anthropic.</div>
+      <div class="modal-input-row"><input class="modal-input" id="keyInput" type="password" placeholder="Paste your sk-ant-... key here" autocomplete="off"/></div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+        <button type="button" class="modal-btn" id="saveKeyBtn">SAVE KEY</button>
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" class="modal-hint" style="text-decoration:none;border-bottom:1px solid var(--text-muted)">Get a free API key &rarr;</a>
+      </div>
       <div class="modal-error" id="keyStatus"></div>
-      <div class="modal-hint">get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a></div>
     </div>
     <div class="modal-divider"></div>
     <div class="modal-section">

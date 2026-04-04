@@ -86,6 +86,21 @@ const COMPONENT_PIN_OFFSETS = {
   'lcd-i2c': [{ name: 'GND', x: 14, y: 60 }, { name: 'VCC', x: 28, y: 60 }, { name: 'SDA', x: 42, y: 60 }, { name: 'SCL', x: 56, y: 60 }],
 };
 
+// All logical pins that must have at least one wire for each component type.
+// Missing any of these is a wiring error (e.g. DHT22 with DATA unwired).
+const COMPONENT_REQUIRED_PINS = {
+  led:           ['A', 'C'],
+  buzzer:        ['+', '-'],
+  dht22:         ['VCC', 'DATA', 'GND'],
+  'hc-sr04':     ['VCC', 'TRIG', 'ECHO', 'GND'],
+  servo:         ['GND', '5V', 'SIG'],
+  oled:          ['GND', 'VCC', 'SCL', 'SDA'],
+  'lcd-i2c':     ['GND', 'VCC', 'SDA', 'SCL'],
+  potentiometer: ['L', 'W', 'R'],
+  resistor:      ['1', '2'],
+  button:        [], // buttons commonly leave some corner pins unwired
+};
+
 const BOARD_PIN_NAMES = {
   'arduino-uno': ['AREF', 'GND_DIG', 'D13', 'D12', 'D11', 'D10', 'D9', 'D8', 'D7', 'D6', 'D5', 'D4', 'D3', 'D2', 'TX', 'RX', 'IOREF', 'RESET', 'V3_3', 'V5', 'GND', 'GND2', 'VIN', 'A0', 'A1', 'A2', 'A3', 'A4', 'A5'],
   'arduino-mega': ['D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10', 'D11', 'D12', 'D13', 'GND_DIG', 'AREF', 'SDA', 'SCL', 'D22', 'D23', 'D24', 'D25', 'D26', 'D27', 'IOREF', 'RESET', 'V3_3', 'V5', 'GND', 'GND2', 'VIN', 'A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'A11', 'A12', 'A13', 'A14', 'A15'],
@@ -592,6 +607,28 @@ export function validateDiagram(diagram) {
       }
     }
   }
+
+  // Check that every component has all required pins connected
+  const compConnectedPins = {};
+  for (const comp of diagram.components || []) compConnectedPins[comp.id] = new Set();
+  for (const wire of wires) {
+    if (!Array.isArray(wire.path) || wire.path.length < 2) continue;
+    const s = wire.path[0];
+    const e = wire.path[wire.path.length - 1];
+    const nc1 = nearestComponentPin(diagram, s);
+    const nc2 = nearestComponentPin(diagram, e);
+    if (nc1?.distance <= 10 && compConnectedPins[nc1.componentId]) compConnectedPins[nc1.componentId].add(nc1.pin);
+    if (nc2?.distance <= 10 && compConnectedPins[nc2.componentId]) compConnectedPins[nc2.componentId].add(nc2.pin);
+  }
+  for (const comp of diagram.components || []) {
+    const required = COMPONENT_REQUIRED_PINS[comp.type] || [];
+    const connected = compConnectedPins[comp.id] || new Set();
+    const missing = required.filter(pin => !connected.has(pin));
+    if (missing.length > 0) {
+      issues.push(`${describeComponent(comp)} (${comp.id}) is missing wire(s) on: ${missing.join(', ')}.`);
+    }
+  }
+
   return { ok: issues.length === 0, issues };
 }
 
@@ -649,6 +686,9 @@ export function summarizeSupport(guide) {
   const safeTextOnly = !!diagramUnavailableLine && wiregenBlocks.length === 0;
   const supportedDiagram = !diagramUnavailableLine && wiregenBlocks.length > 0 && diagramValidation?.ok;
   const canSimulate = supportedDiagram && diagram.components.every((comp) => SIM_SUPPORTED_COMPONENT_TYPES.includes(comp.type));
+  const simulationBlockers = (supportedDiagram && diagram)
+    ? [...new Set(diagram.components.filter(c => !SIM_SUPPORTED_COMPONENT_TYPES.includes(c.type)).map(c => c.type))]
+    : [];
 
   return {
     ok: issues.length === 0,
@@ -660,5 +700,6 @@ export function summarizeSupport(guide) {
     supportedDiagram,
     safeTextOnly,
     canSimulate,
+    simulationBlockers,
   };
 }

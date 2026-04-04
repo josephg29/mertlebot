@@ -28,43 +28,61 @@ async function withTimeout(promise, ms) {
 async function requestGuide(client, system, userContent, model = 'claude-sonnet-4-6') {
   const msg = await withTimeout(client.messages.create({
     model,
-    max_tokens: 4096,
+    max_tokens: 3500,
     system,
     messages: [{ role: 'user', content: userContent }],
-  }), model === 'claude-sonnet-4-6' ? 35000 : 20000);
+  }), model === 'claude-sonnet-4-6' ? 40000 : 20000);
   return msg.content?.[0]?.text || '';
 }
 
-async function generateValidatedGuide(client, system, prompt, userContent) {
-  const maxAttempts = 2;
-  let draft = '';
-  let validation = null;
+// Stream first-pass (Haiku) output directly to the client in real-time.
+// If validation fails, send a {replacing:true} signal and stream a Sonnet repair.
+async function streamBuildGuide(client, system, prompt, userContent, send) {
+  let fullText = '';
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const repairContext = attempt === 1
-      ? userContent
-      : [
-          `Original project request: ${prompt}`,
-          '',
-          'Your previous draft failed validation. Rewrite the FULL guide from scratch and fix every issue below.',
-          '',
-          'Validation issues:',
-          ...(validation?.issues || []).map((issue) => `- ${issue}`),
-          '',
-          'Previous invalid draft:',
-          draft,
-        ].join('\n');
+  const firstPass = client.messages.stream({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 3500,
+    system,
+    messages: [{ role: 'user', content: userContent }],
+  });
 
-    const model = attempt === 1 ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001';
-    draft = await requestGuide(client, system, repairContext, model);
-    draft = repairGuide(draft);
-    validation = summarizeSupport(draft);
-    if (validation.ok) {
-      return { text: draft, attempts: attempt, validation };
+  for await (const event of firstPass) {
+    if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+      fullText += event.delta.text;
+      send({ t: event.delta.text });
     }
   }
 
-  throw new Error(`Generated guide failed validation after ${maxAttempts} attempts: ${validation?.issues.join(' ')}`);
+  fullText = repairGuide(fullText);
+  const validation = summarizeSupport(fullText);
+  if (validation.ok) return;
+
+  // First pass failed validation — repair with Sonnet and replace client content
+  send({ replacing: true });
+
+  const repairContext = [
+    `Original project request: ${prompt}`,
+    '',
+    'Your previous draft failed validation. Rewrite the FULL guide from scratch and fix every issue below.',
+    '',
+    'Validation issues:',
+    ...(validation.issues || []).map((issue) => `- ${issue}`),
+    '',
+    'Previous invalid draft:',
+    fullText,
+  ].join('\n');
+
+  const repairedText = repairGuide(await requestGuide(client, system, repairContext, 'claude-sonnet-4-6'));
+  const finalValidation = summarizeSupport(repairedText);
+
+  if (!finalValidation.ok) {
+    throw new Error(`Guide failed validation after repair: ${finalValidation.issues.join(' ')}`);
+  }
+
+  for (let i = 0; i < repairedText.length; i += 160) {
+    send({ t: repairedText.slice(i, i + 160) });
+  }
 }
 
 async function classifyIntent(client, prompt) {
@@ -125,16 +143,17 @@ export async function POST({ request }) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      const send = (payload) => controller.enqueue(enc.encode(`data: ${JSON.stringify(payload)}\n\n`));
       // Send intent hint first so the client knows BUILD vs CHAT
-      controller.enqueue(enc.encode(`data: ${JSON.stringify({ intent })}\n\n`));
+      send({ intent });
       try {
-        const text = intent === 'BUILD'
-          ? (await generateValidatedGuide(client, fullSystem, prompt, userContent)).text
-          : await requestGuide(client, fullSystem, userContent);
-
-        for (let i = 0; i < text.length; i += 160) {
-          const chunk = text.slice(i, i + 160);
-          controller.enqueue(enc.encode(`data: ${JSON.stringify({ t: chunk })}\n\n`));
+        if (intent === 'BUILD') {
+          await streamBuildGuide(client, fullSystem, prompt, userContent, send);
+        } else {
+          const text = await requestGuide(client, fullSystem, userContent);
+          for (let i = 0; i < text.length; i += 160) {
+            send({ t: text.slice(i, i + 160) });
+          }
         }
         controller.enqueue(enc.encode('data: [DONE]\n\n'));
         controller.close();
@@ -146,7 +165,7 @@ export async function POST({ request }) {
         }
         console.error('Generate error:', err.constructor?.name, err.message);
         try {
-          controller.enqueue(enc.encode(`data: ${JSON.stringify({ error: err.message })}\n\n`));
+          send({ error: err.message });
           controller.enqueue(enc.encode('data: [DONE]\n\n'));
           controller.close();
         } catch {}
