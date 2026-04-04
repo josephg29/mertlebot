@@ -1,0 +1,475 @@
+# MERTLEBOT - MASTER CONTEXT FILE
+
+## 🎯 WHAT IS MERTLEBOT?
+
+**mertlebot** is an AI-powered electronics project generator that transforms natural language descriptions into complete, build-ready electronics projects. It's like having an electronics engineer, wiring diagram designer, and code generator all in one tool.
+
+### Core Function
+```
+User Input: "Create a temperature-controlled fan"
+↓
+mertlebot Processing
+↓
+Output:
+1. Interactive wiring diagram (wiregen)
+2. Complete parts list with specifications
+3. Ready-to-flash Arduino code
+4. Step-by-step build instructions
+5. Optional: Browser-based circuit simulation
+```
+
+### Live Demo Concept
+Imagine typing "motion-sensing alarm" and getting:
+- A professional wiring diagram showing exactly how to connect the PIR sensor, buzzer, and Arduino
+- A shopping list: "1x PIR sensor (HC-SR501), 1x Piezo buzzer, 1x Arduino Uno..."
+- Complete Arduino code with comments
+- Step-by-step assembly instructions
+- A clickable simulation to test it in browser
+
+## 🏗️ ARCHITECTURE OVERVIEW
+
+### Technology Stack
+```
+Frontend: Svelte 5 + SvelteKit + Vite
+Backend:  Node.js + SvelteKit API Routes
+LLM:      Dual-provider (Anthropic Claude & DeepSeek)
+Viz:      Custom SVG-based wiregen engine
+Config:   File-based (config.json)
+```
+
+### Key Components
+1. **Wiregen Visualization Engine** - Interactive SVG wiring diagrams
+2. **LLM Service Abstraction** - Unified interface for multiple AI providers
+3. **Prompt Engineering System** - Structured output generation
+4. **Real-time Streaming** - SSE-based progressive responses
+5. **Theme & Skill System** - Customizable user experience
+
+## 🔌 WIREGEN VISUALIZATION ENGINE
+
+### What It Does
+Turns JSON data into professional wiring diagrams that would normally require manual CAD work.
+
+### Component Library (10+ Types)
+```
+Basic:        LED, Resistor, Button, Buzzer
+Sensors:      DHT22 (temp/humidity), HC-SR04 (ultrasonic)
+Actuators:    ServoMotor
+Displays:     OLED Display, LCD I2C
+Input:        Potentiometer
+```
+
+### Board Support (4 Types)
+- Arduino Uno (most common)
+- Arduino Mega (more pins)
+- Arduino Nano (compact)
+- ESP32 DevKit V1 (WiFi/Bluetooth)
+
+### Interactive Features
+- **Zoom & Pan**: Navigate complex diagrams
+- **Component Selection**: Click to highlight connections
+- **Wire Routing**: Automatic right-angle paths
+- **De-overlapping**: Clean diagram layout
+- **Real-time Updates**: Live rendering as AI generates
+
+### Technical Implementation
+- **File**: `WiringCanvas.svelte` (669 lines)
+- **Format**: SVG with JavaScript interactivity
+- **Canvas**: 960×640 pixels
+- **Coordinates**: Pixel-based placement system
+- **Routing**: Orthogonal (Manhattan) wire paths
+
+### Example Wiregen JSON
+```json
+{
+  "board": { "type": "arduino-uno", "x": 50, "y": 240 },
+  "components": [
+    { "id": "led1", "type": "led", "x": 300, "y": 150, "props": { "color": "red" } }
+  ],
+  "wires": [
+    { "color": "yellow", "path": [[92,230],[92,205],[430,205]], "label": "D13" }
+  ],
+  "componentList": [ { "label": "Red LED", "qty": 1 } ]
+}
+```
+
+## 🤖 LLM INTEGRATION SYSTEM
+
+### Dual-Provider Architecture
+**Anthropic Claude** (Higher cost, excellent quality):
+- Models: Claude Haiku (fast), Claude Sonnet (smart)
+- Key format: `sk-ant-abc123...`
+- Streaming: SDK built-in
+
+**DeepSeek** (Lower cost, very good quality):
+- Model: deepseek-chat
+- Key format: `sk-123456...`
+- Streaming: SSE (OpenAI-compatible)
+
+### LLM Service Abstraction (`llm-service.js` - 363 lines)
+```javascript
+// Same interface for both providers
+class LLMService {
+  async generateStream(options)     // Project generation
+  async classifyIntent(prompt)      // BUILD vs CHAT
+  async clarify(prompt, questions)  // Question selection
+  async simulate(prompt, guide)     // Wokwi simulation
+  validateApiKey(key)               // Format validation
+  getProviderInfo()                 // UI metadata
+}
+```
+
+### Key Methods
+1. **`generateStream()`** - Main project generation with real-time streaming
+2. **`classifyIntent()`** - Determines if user wants to BUILD or just CHAT
+3. **`clarify()`** - Asks relevant questions before generating
+4. **`simulate()`** - Creates Wokwi browser simulations
+
+## 🌐 API ENDPOINTS
+
+### 1. `/api/generate` (179 lines)
+**Purpose**: Main project generation
+**Input**: Project description, skill level, age
+**Output**: Streaming response with wiregen JSON, parts, code, steps
+**Features**: Intent classification, skill context, dual-provider routing
+
+### 2. `/api/clarify` (34 lines)
+**Purpose**: Question refinement
+**Input**: Project description, available questions
+**Output**: 0-5 relevant clarification questions
+**Timeout**: 3 seconds with regex fallback
+
+### 3. `/api/simulate` (75 lines)
+**Purpose**: Circuit simulation generation
+**Input**: Project description and guide
+**Output**: Wokwi simulation URL + Arduino sketch
+**Integration**: Direct Wokwi API communication
+
+### 4. `/api/key` (39 lines)
+**GET**: Returns configuration status
+**POST**: Saves API key and provider preference
+**Validation**: Provider-specific format checking
+
+## 🎨 USER INTERFACE
+
+### Main Sections
+1. **Hero Area** - Primary input with skill level selection
+2. **Chat Interface** - Conversational interaction mode
+3. **Output Panel** - Wiregen diagram + build guide
+4. **Settings Modal** - Provider selection, API key, themes
+5. **History Panel** - Project archive with export
+
+### Settings & Customization
+- **Provider Selection**: Toggle between Anthropic Claude and DeepSeek
+- **6 Visual Themes**: Deep Sea, Phosphor, Amber, Arctic, Sakura, Solder
+- **5 Skill Levels**: Monkey → Novice → Builder → Hacker → Expert
+- **Age Adjustment**: 6-60 years (changes explanation complexity)
+- **Font Scaling**: 80-150% for accessibility
+
+### Provider Selection UI
+- Chip-based toggle (Anthropic/DeepSeek)
+- Dynamic key input placeholder
+- Provider-specific help links
+- Persistent preference storage
+
+## 📝 PROMPT ENGINEERING SYSTEM
+
+### File: `prompts.js` (324 lines, 6 sections)
+
+1. **SYSTEM** - Main build guide prompt with strict wiregen JSON format
+2. **SKILL_CONTEXT** - Adjustments for 5 skill levels
+3. **CHAT_SYSTEM** - Conversational mode prompt
+4. **CLARIFY_SYSTEM** - Question selection logic
+5. **SIM_PROMPT** - Wokwi simulation generation
+6. **QUESTION_CATALOG** - 20+ pre-defined clarification questions
+
+### Strict Output Format
+```
+# [Project Name]
+
+## WIRING
+```wiregen
+{JSON diagram with exact coordinates}
+```
+
+## PARTS
+- [qty]x [Part Name] -- [specifications]
+
+## CODE
+```cpp
+[Complete, ready-to-flash Arduino code]
+```
+
+## STEPS
+1. [Step-by-step assembly instructions]
+2. [Testing and verification]
+3. [Troubleshooting tips]
+```
+
+### Key Prompt Features
+- Enforces consistent JSON structure for wiregen
+- Includes coordinate placement for components
+- Provides age-appropriate explanations
+- Maintains professional tone across skill levels
+
+## ⚙️ CONFIGURATION SYSTEM
+
+### File: `config.json`
+```json
+{
+  "apiKey": "",           // User's LLM API key
+  "provider": "anthropic", // anthropic or deepseek
+  "theme": "solder",      // UI theme
+  "skill": "MONKEY",      // Skill level
+  "age": 25,             // Explanation complexity
+  "fontSize": 16         // Base font size
+}
+```
+
+### Management: `config.js`
+- `loadConfig()` - Reads from `config.json`
+- `saveConfig(cfg)` - Writes to `config.json`
+- `getApiKey()` - Returns key from config or environment
+- `getProvider()` - Returns current provider
+
+## 📊 CODEBASE STATISTICS
+
+### Line Counts
+- **Total Application**: ~2,800 lines (excluding dependencies)
+- **Main Page (`+page.svelte`)**: 1,206 lines
+- **Wiregen Canvas (`WiringCanvas.svelte`)**: 669 lines
+- **LLM Service (`llm-service.js`)**: 363 lines
+- **Prompts (`prompts.js`)**: 324 lines
+- **API Endpoints**: 327 lines total (4 endpoints)
+
+### File Structure
+```
+mertlebot/
+├── src/
+│   ├── routes/
+│   │   ├── +page.svelte          # Main frontend (1,206 lines)
+│   │   └── api/                  # API endpoints (327 lines total)
+│   │       ├── generate/+server.js      # 179 lines
+│   │       ├── clarify/+server.js       # 34 lines
+│   │       ├── simulate/+server.js      # 75 lines
+│   │       └── key/+server.js           # 39 lines
+│   ├── lib/
+│   │   ├── server/
+│   │   │   ├── llm-service.js    # LLM abstraction (363 lines)
+│   │   │   ├── prompts.js        # System prompts (324 lines)
+│   │   │   ├── config.js         # Configuration
+│   │   │   └── wokwi.js          # Simulation integration
+│   │   └── wiregen/              # Visualization engine
+│       ├── WiringCanvas.svelte   # Main canvas (669 lines)
+│       ├── parts/                # 10+ component types (*.svelte)
+│       └── boards/               # 4 board types (*.svelte)
+├── static/                       # Static assets
+├── config.json                   # Configuration file
+└── package.json                  # Dependencies
+```
+
+## 📦 DEPENDENCIES
+
+### package.json
+```json
+{
+  "name": "mertle-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "start": "node build/index.js",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",     # E2E testing
+    "@sveltejs/adapter-node": "^5.2.0", # Node.js adapter
+    "@sveltejs/kit": "^2.15.0",        # SvelteKit framework
+    "@sveltejs/vite-plugin-svelte": "^5.0.0", # Svelte+Vite integration
+    "playwright": "^1.59.1",           # Browser testing
+    "svelte": "^5.0.0",                # Svelte 5
+    "vite": "^6.0.0"                   # Build tool
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"     # Anthropic Claude API
+  }
+}
+```
+
+## 🚀 USER WORKFLOW
+
+### Step-by-Step Experience
+1. **Visit**: User goes to mertle.bot
+2. **Describe**: Types project idea (e.g., "plant watering system")
+3. **Customize**: Selects skill level (e.g., "Builder")
+4. **Clarify**: Answers 0-3 refinement questions if needed
+5. **Generate**: Watches real-time streaming response
+6. **Visualize**: Interactive wiregen diagram renders
+7. **Implement**: Follows parts list, code, and steps
+8. **Simulate**: Optionally tests in Wokwi browser simulator
+9. **Save**: Project added to history for later reference
+
+### Example Projects
+- "LED blinker with potentiometer speed control"
+- "Temperature and humidity monitor with OLED display"
+- "Ultrasonic distance sensor with buzzer alarm"
+- "Servo-controlled camera slider"
+- "Motion-activated night light"
+
+## 🔧 DEVELOPMENT & DEPLOYMENT
+
+### Development Commands
+```bash
+npm run dev    # Start development server
+npm run build  # Create production build
+npm run start  # Run production server
+npm run preview # Preview production build
+```
+
+### Testing
+- **Playwright**: Configured for end-to-end testing
+- **Mock Responses**: Built-in for testing without API keys
+- **Error Boundaries**: Comprehensive error handling
+
+### Deployment Options
+1. **Vercel/Netlify**: Static + serverless functions
+2. **Docker**: Containerized deployment
+3. **Self-hosted**: Node.js server
+4. **Desktop**: Potential Electron wrapper
+
+## 🎯 UNIQUE VALUE PROPOSITIONS
+
+### 1. Professional Visualization
+Unlike text-only AI tools, mertlebot generates **interactive wiring diagrams** that would normally require manual CAD software.
+
+### 2. Complete Solution
+From idea to implementation: diagram + parts + code + instructions + simulation.
+
+### 3. Dual-Provider Flexibility
+Users can choose between premium (Anthropic) and cost-effective (DeepSeek) AI providers.
+
+### 4. Skill-Based Adaptation
+Tailored explanations for complete beginners through electronics experts.
+
+### 5. Real-time Experience
+Streaming responses provide immediate feedback rather than waiting for complete generation.
+
+## 🔄 CURRENT IMPLEMENTATION STATE
+
+### Authentication Model
+- **Type**: API key-based (user provides own LLM keys)
+- **Storage**: Single `config.json` file
+- **Scope**: Global (single user/instance configuration)
+- **Validation**: Format checking only
+
+### State Management
+- **Local Storage**: UI preferences (theme, skill, provider)
+- **Session State**: Current project, chat history
+- **File Storage**: API key and configuration
+
+### Error Handling
+- **LLM Errors**: Provider-specific error messages
+- **Stream Errors**: Graceful connection handling
+- **Validation**: Input and key format validation
+- **Timeouts**: 3-second timeout for clarification
+
+### Performance Features
+- **Client-side Rendering**: Wiregen visualization avoids server load
+- **Streaming**: Real-time feedback without blocking
+- **Caching**: Local storage for preferences
+- **Lazy Loading**: Components load as needed
+
+## 🌍 EXTERNAL INTEGRATIONS
+
+### APIs Used
+1. **Anthropic API**: Claude models (Haiku for speed, Sonnet for complexity)
+2. **DeepSeek API**: deepseek-chat model (OpenAI-compatible)
+3. **Wokwi API**: Circuit simulation and embedding
+
+### Technical Requirements
+- Modern browser with SVG support
+- JavaScript enabled
+- CSS Custom Properties support
+- Server-Sent Events (SSE) support
+
+## 📈 RECENT DEVELOPMENT
+
+### Dual-Provider Implementation (Commit 27b3801)
+- Added DeepSeek API support alongside existing Anthropic
+- Created abstract LLM service layer
+- Updated all API endpoints to use abstraction
+- Added provider selection UI
+- Maintained backward compatibility
+
+### Key Technical Decisions
+1. **Clean Abstraction**: Separated LLM logic from application
+2. **Consistent Streaming**: Both providers support real-time responses
+3. **Client-side Wiregen**: No API key needed for visualization
+4. **File-based Simplicity**: Easy deployment, no database required
+
+## 🎮 EXAMPLE USER SCENARIOS
+
+### Scenario 1: Educator
+**Goal**: Create classroom project for high school students
+**Input**: "Create a simple temperature display using an Arduino and LCD"
+**Result**: Age-appropriate instructions, clear diagram, complete code
+
+### Scenario 2: Hobbyist
+**Goal**: Build home automation project
+**Input**: "Make a smart plant watering system with soil moisture sensor"
+**Result**: Parts list with Amazon links, wiring diagram, automation code
+
+### Scenario 3: Professional
+**Goal**: Prototype IoT device
+**Input**: "Design an ESP32-based environmental monitor with WiFi upload"
+**Result**: Professional diagram, efficient code, cloud integration tips
+
+## 🔍 TECHNICAL CONSTRAINTS
+
+### Current Limitations
+- Single-user configuration (`config.json`)
+- No user management system
+- No database integration
+- File-based state persistence
+- Global API key (not user-specific)
+
+### Browser Requirements
+- Modern browser (Chrome 90+, Firefox 88+, Safari 14+)
+- JavaScript enabled
+- SVG support
+- CSS Custom Properties
+- SSE (Server-Sent Events)
+
+## 💡 POTENTIAL EXTENSIONS
+
+### Technical Extensions
+1. **More LLM Providers**: OpenAI GPT, Google Gemini, local models
+2. **Additional Components**: More sensors, microcontrollers, modules
+3. **Export Formats**: PDF, KiCad, Fritzing, Gerber
+4. **Mobile Optimization**: Touch-friendly wiregen interface
+
+### Feature Extensions
+5. **Project Sharing**: User-generated project library
+6. **Version Control**: Project history and branching
+7. **Collaboration**: Multi-user project editing
+8. **Marketplace**: Component purchasing integration
+
+## 📋 QUICK REFERENCE
+
+### For AI Discussions
+- **Framework**: Svelte 5 + SvelteKit
+- **LLM**: Dual-provider (Anthropic & DeepSeek)
+- **Viz**: Custom SVG wiregen engine
+- **Output**: Diagram + parts + code + instructions
+- **State**: Production-ready, API key model
+
+### For Developers
+- **Code**: ~2,800 lines, well-structured
+- **APIs**: 4 endpoints, streaming support
+- **Components**: 10+ electronic parts, 4 boards
+- **Themes**: 6 CSS themes, 5 skill levels
+- **Testing**: Playwright configured
+
+### For Users
+- **Input**: Describe electronics project
+-
