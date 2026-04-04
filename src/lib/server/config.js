@@ -17,5 +17,9 @@ export function saveConfig(cfg) {
 }
 
 export function getApiKey() {
-  return loadConfig().apiKey || process.env.ANTHROPIC_API_KEY || null;
+  return loadConfig().apiKey || process.env.ANTHROPIC_API_KEY || process.env.DEEPSEEK_API_KEY || null;
+}
+
+export function getProvider() {
+  return loadConfig().provider || 'anthropic';
 }

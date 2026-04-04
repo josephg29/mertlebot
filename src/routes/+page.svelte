@@ -35,10 +35,11 @@
   let hero, heroInput, heroGo, chatInput, sendBtn, charCount,
       statusDot, statusText, statusSkill, outputContext,
       chatLog, buildOutput, emptyState, outputScroll,
-      modalBg, keyInput, saveKeyBtn, keyStatus, modalCloseBtn,
+      modalBg, keyInput, saveKeyBtn, keyStatus, modalCloseBtn, keyHint,
       themeGrid, skillGrid, ageSlider, ageValEl,
       fontSlider, fontValEl,
       histPanel, histList, histClose,
+      providerGrid,
       chatPane, chatToggle, workspace;
 
   /* ── State ── */
@@ -772,6 +773,28 @@
   }
 
   /* ── Settings ── */
+  function applyProvider(provider) {
+    providerGrid.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.provider === provider));
+    
+    // Update key input placeholder and hint based on provider
+    const providerInfo = {
+      anthropic: {
+        placeholder: 'sk-ant-...',
+        hint: 'get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>'
+      },
+      deepseek: {
+        placeholder: 'sk-...',
+        hint: 'get your key at <a href="https://platform.deepseek.com/api-keys" target="_blank" rel="noopener noreferrer">platform.deepseek.com</a>'
+      }
+    };
+    
+    const info = providerInfo[provider] || providerInfo.anthropic;
+    keyInput.placeholder = info.placeholder;
+    keyHint.innerHTML = info.hint;
+    
+    localStorage.setItem('mrt-provider', provider);
+  }
+
   function applyTheme(n) {
     document.documentElement.setAttribute('data-theme', n);
     localStorage.setItem('mrt-theme', n);
@@ -785,18 +808,53 @@
   }
 
   async function checkKey() {
-    try { const r = await fetch('/api/key'); const { configured } = await r.json(); if (!configured) modalBg.classList.add('open'); } catch {}
+    try { 
+      const r = await fetch('/api/key'); 
+      const { configured, provider } = await r.json(); 
+      if (!configured) {
+        modalBg.classList.add('open');
+      }
+      // Set provider from server if available
+      if (provider) {
+        applyProvider(provider);
+      }
+    } catch {}
   }
   async function saveKey() {
-    const k = keyInput.value.trim(); if (!k) { keyStatus.textContent = 'enter a key'; return; }
-    saveKeyBtn.disabled = true; saveKeyBtn.textContent = '...'; keyStatus.textContent = '';
+    const k = keyInput.value.trim(); 
+    if (!k) { keyStatus.textContent = 'enter a key'; return; }
+    
+    // Get selected provider
+    const selectedProvider = providerGrid.querySelector('.chip.active').dataset.provider;
+    
+    saveKeyBtn.disabled = true; 
+    saveKeyBtn.textContent = '...'; 
+    keyStatus.textContent = '';
+    
     try {
-      const r = await fetch('/api/key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: k }) });
-      if (!r.ok) { const { error } = await r.json(); throw new Error(error); }
-      keyStatus.style.color = 'var(--accent)'; keyStatus.textContent = 'saved!';
-      setTimeout(() => { keyStatus.textContent = ''; keyStatus.style.color = ''; }, 2000);
-    } catch (e) { keyStatus.textContent = e.message || 'failed'; }
-    finally { saveKeyBtn.disabled = false; saveKeyBtn.textContent = 'SAVE KEY'; }
+      const r = await fetch('/api/key', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ key: k, provider: selectedProvider }) 
+      });
+      
+      if (!r.ok) { 
+        const { error } = await r.json(); 
+        throw new Error(error); 
+      }
+      
+      keyStatus.style.color = 'var(--accent)'; 
+      keyStatus.textContent = 'saved!';
+      setTimeout(() => { 
+        keyStatus.textContent = ''; 
+        keyStatus.style.color = ''; 
+      }, 2000);
+    } catch (e) { 
+      keyStatus.textContent = e.message || 'failed'; 
+    } finally { 
+      saveKeyBtn.disabled = false; 
+      saveKeyBtn.textContent = 'SAVE KEY'; 
+    }
   }
 
   function openSettings() { modalBg.classList.add('open'); keyInput.focus(); }
@@ -821,8 +879,8 @@
     chatLog = gid('chatLog'); buildOutput = gid('buildOutput');
     emptyState = gid('emptyState'); outputScroll = gid('outputScroll');
     modalBg = gid('modalBg'); keyInput = gid('keyInput'); saveKeyBtn = gid('saveKeyBtn');
-    keyStatus = gid('keyStatus'); modalCloseBtn = gid('modalCloseBtn');
-    themeGrid = gid('themeGrid'); skillGrid = gid('skillGrid');
+    keyStatus = gid('keyStatus'); modalCloseBtn = gid('modalCloseBtn'); keyHint = gid('keyHint');
+    themeGrid = gid('themeGrid'); skillGrid = gid('skillGrid'); providerGrid = gid('providerGrid');
     ageSlider = gid('ageSlider'); ageValEl = gid('ageVal');
     fontSlider = gid('fontSlider'); fontValEl = gid('fontVal');
     histPanel = gid('histPanel'); histList = gid('histList'); histClose = gid('histClose');
@@ -933,10 +991,11 @@
       }
     });
 
-    /* Theme, skill, age, font */
+    /* Theme, skill, age, font, provider */
     themeGrid.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => applyTheme(c.dataset.theme)));
     document.querySelectorAll('.hero-skill').forEach(b => b.addEventListener('click', () => applySkill(Number(b.dataset.skill))));
     skillGrid.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => applySkill(Number(b.dataset.skill))));
+    providerGrid.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => applyProvider(b.dataset.provider)));
     ageSlider.addEventListener('input', () => applyAge(Number(ageSlider.value)));
     fontSlider.addEventListener('input', () => applyFontScale(Number(fontSlider.value)));
     saveKeyBtn.addEventListener('click', saveKey);
@@ -945,6 +1004,7 @@
     /* Init sequence */
     applyTheme(localStorage.getItem('mrt-theme') || 'solder');
     applySkill(Number(localStorage.getItem('mrt-skill')) || 1);
+    applyProvider(localStorage.getItem('mrt-provider') || 'anthropic');
     applyAge(Number(localStorage.getItem('mrt-age')) || 25);
     applyFontScale(Number(localStorage.getItem('mrt-font-scale')) || 100);
     renderHist();
@@ -1082,11 +1142,19 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
     <div class="modal-title" id="settingsModalTitle">SETTINGS</div>
     <div class="modal-section">
+      <div class="modal-label">AI Provider</div>
+      <div class="chip-grid" id="providerGrid">
+        <button type="button" class="chip active" data-provider="anthropic">Anthropic Claude</button>
+        <button type="button" class="chip" data-provider="deepseek">DeepSeek</button>
+      </div>
+    </div>
+    <div class="modal-divider"></div>
+    <div class="modal-section">
       <div class="modal-label">API Key</div>
       <div class="modal-input-row"><input class="modal-input" id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off"/></div>
       <button type="button" class="modal-btn" id="saveKeyBtn">SAVE KEY</button>
       <div class="modal-error" id="keyStatus"></div>
-      <div class="modal-hint">get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a></div>
+      <div class="modal-hint" id="keyHint">get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a></div>
     </div>
     <div class="modal-divider"></div>
     <div class="modal-section">
