@@ -1,0 +1,235 @@
+# MERTLEBOT - PURE TECHNICAL FACTS
+
+## APPLICATION SPECIFICATIONS
+- Name: mertlebot (mertle.bot)
+- Function: Natural language to electronics project generator
+- Output: Wiring diagrams + code + parts list + instructions
+- Framework: Svelte 5 + SvelteKit
+- Build: Vite
+- Language: JavaScript/TypeScript (ES modules)
+
+## ARCHITECTURE COMPONENTS
+
+### Frontend (Client)
+- Svelte components
+- SVG-based wiregen visualization
+- 6 CSS themes via custom properties
+- 5 skill level presets
+- Local storage for preferences
+- Real-time SSE streaming display
+
+### Backend (Server)
+- Node.js runtime
+- SvelteKit server routes
+- 4 API endpoints
+- File-based configuration (`config.json`)
+- LLM service abstraction layer
+
+### LLM Integration
+- Providers: Anthropic Claude, DeepSeek
+- Abstraction: `llm-service.js` (363 lines)
+- Methods: `generateStream()`, `classifyIntent()`, `clarify()`, `simulate()`
+- Streaming: SSE for both providers
+- Validation: Provider-specific key format regex
+
+## WIREGEN ENGINE
+
+### Files
+- `WiringCanvas.svelte` (669 lines)
+- `parts/` directory (10+ component Svelte files)
+- `boards/` directory (4 board Svelte files)
+
+### Components
+- LED, Resistor, Button, Buzzer
+- DHT22, HC-SR04, ServoMotor
+- OLED Display, LCD I2C, Potentiometer
+
+### Boards
+- Arduino Uno, Mega, Nano
+- ESP32 DevKit V1
+
+### Technical Features
+- 960×640 SVG canvas
+- Orthogonal wire routing
+- Coordinate-based placement
+- Zoom/pan controls
+- Component selection
+- Automatic wire de-overlapping
+
+## API ENDPOINTS
+
+### `/api/generate` (POST)
+- Streaming SSE response
+- Intent classification (BUILD/CHAT)
+- Skill/age context injection
+- Dual-provider routing
+- 179 lines of code
+
+### `/api/clarify` (POST)
+- Question filtering/selection
+- 3-second timeout
+- Regex fallback
+- 34 lines of code
+
+### `/api/simulate` (POST)
+- Wokwi simulation generation
+- Arduino sketch extraction
+- Library dependency detection
+- 75 lines of code
+
+### `/api/key` (GET/POST)
+- Configuration status
+- Key validation and storage
+- Provider preference saving
+- 39 lines of code
+
+## CONFIGURATION
+
+### File: `config.json`
+```json
+{
+  "apiKey": "",
+  "provider": "anthropic",
+  "theme": "solder",
+  "skill": "MONKEY",
+  "age": 25,
+  "fontSize": 16
+}
+```
+
+### Management: `config.js`
+- `loadConfig()`: Reads JSON file
+- `saveConfig(cfg)`: Writes JSON file
+- `getApiKey()`: Returns key from config or env
+- `getProvider()`: Returns current provider
+
+## PROMPTS
+
+### File: `prompts.js` (324 lines)
+- 6 exported prompt sections
+- Strict output format enforcement
+- Skill-level adjustments
+- Wiregen JSON schema in prompts
+- Question catalog (20+ questions)
+
+### Output Format
+```
+# [Title]
+## WIRING
+```wiregen
+{JSON}
+```
+## PARTS
+- [list]
+## CODE
+```cpp
+[code]
+```
+## STEPS
+1. [steps]
+```
+
+## DEPENDENCIES
+
+### package.json
+```json
+{
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@sveltejs/adapter-node": "^5.2.0",
+    "@sveltejs/kit": "^2.15.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "playwright": "^1.59.1",
+    "svelte": "^5.0.0",
+    "vite": "^6.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
+  }
+}
+```
+
+## CODE METRICS
+
+### Line Counts
+- Total: ~2,800 lines
+- `+page.svelte`: 1,206 lines
+- `WiringCanvas.svelte`: 669 lines
+- `llm-service.js`: 363 lines
+- `prompts.js`: 324 lines
+- API endpoints: 327 lines total
+
+### File Structure
+```
+src/
+├── routes/
+│   ├── +page.svelte
+│   └── api/[endpoint]/+server.js
+├── lib/
+│   ├── server/
+│   │   ├── llm-service.js
+│   │   ├── prompts.js
+│   │   ├── config.js
+│   │   └── wokwi.js
+│   └── wiregen/
+│       ├── WiringCanvas.svelte
+│       ├── parts/*.svelte
+│       └── boards/*.svelte
+```
+
+## CURRENT STATE FACTS
+
+### Authentication
+- API key based (user provides)
+- Single `config.json` file
+- Global scope (one key per instance)
+- Format validation only
+
+### State Management
+- Local storage: preferences
+- Session: project state, chat history
+- File: configuration
+
+### Error Handling
+- LLM provider errors
+- Stream connection errors
+- Input validation errors
+- Timeout handling (3s for clarify)
+
+### Performance
+- Client-side wiregen rendering
+- SSE streaming responses
+- Local storage caching
+- Lazy component loading
+
+## DEVELOPMENT
+
+### Commands
+- `npm run dev`: Development server
+- `npm run build`: Production build
+- `npm run start`: Production server
+- `npm run preview`: Preview build
+
+### Testing
+- Playwright configured
+- Mock responses available
+- Error boundaries implemented
+
+## EXTERNAL INTEGRATIONS
+
+### APIs Used
+- Anthropic API (Claude models)
+- DeepSeek API (deepseek-chat)
+- Wokwi API (simulation)
+
+### Technical Requirements
+- Modern browser with SVG
+- JavaScript enabled
+- CSS Custom Properties
+- SSE support
+
+---
+**Generated**: 2026-04-04
+**Type**: Technical facts only
+**Source**: Code analysis
+**Commit**: 27b3801 (dual-provider implementation)

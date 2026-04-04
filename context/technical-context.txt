@@ -1,0 +1,321 @@
+# Mertlebot Application - Technical Context Only
+
+## APPLICATION OVERVIEW
+- **Name**: mertlebot (mertle.bot)
+- **Tagline**: "describe it. build it."
+- **Function**: Electronics project generator - converts natural language descriptions into complete build guides with wiring diagrams
+- **Current Deployment**: Single-instance, file-based configuration
+
+## TECHNICAL ARCHITECTURE
+
+### Frontend Stack
+- **Framework**: Svelte 5
+- **Meta-framework**: SvelteKit
+- **Build Tool**: Vite
+- **Styling**: CSS with custom properties (CSS variables)
+- **Key Component**: Wiregen visualization engine (client-side SVG)
+
+### Backend Stack
+- **Runtime**: Node.js
+- **API Framework**: SvelteKit server routes
+- **Configuration**: JSON file (`config.json`)
+- **Streaming**: Server-Sent Events (SSE)
+
+### LLM Integration
+- **Providers Supported**: Anthropic Claude, DeepSeek
+- **Abstraction Layer**: `llm-service.js` (363 lines)
+- **Interface Methods**: `generateStream()`, `classifyIntent()`, `clarify()`, `simulate()`
+- **Key Validation**: Provider-specific format checking
+
+## WIREGEN VISUALIZATION ENGINE
+
+### Component Library
+- **Basic Components**: LED, Resistor, Button, Buzzer
+- **Sensors**: DHT22 (temperature/humidity), HC-SR04 (ultrasonic)
+- **Actuators**: ServoMotor
+- **Displays**: OLED Display, LCD I2C
+- **Input**: Potentiometer
+
+### Board Support
+- Arduino Uno
+- Arduino Mega
+- Arduino Nano
+- ESP32 DevKit V1
+
+### Technical Implementation
+- **File**: `WiringCanvas.svelte` (669 lines)
+- **Technology**: SVG with JavaScript interactivity
+- **Features**: Zoom, pan, component selection, wire routing
+- **Wire Routing**: Orthogonal (right-angle) paths with de-overlapping
+- **Coordinate System**: Pixel-based placement (960×640 canvas)
+
+### JSON Schema
+```json
+{
+  "board": { "type": "arduino-uno", "x": 50, "y": 240 },
+  "components": [
+    { "id": "led1", "type": "led", "x": 300, "y": 150, "props": { "color": "red" } }
+  ],
+  "wires": [
+    { "color": "yellow", "path": [[92,230],[92,205],[430,205]], "label": "D13" }
+  ],
+  "componentList": [ { "label": "Red LED", "qty": 1 } ]
+}
+```
+
+## API ENDPOINTS
+
+### `/api/generate` (179 lines)
+- **Method**: POST
+- **Purpose**: Main project generation
+- **Response**: Streaming SSE
+- **Features**: Intent classification, skill/age context, dual-provider support
+
+### `/api/clarify` (34 lines)
+- **Method**: POST
+- **Purpose**: Question clarification selection
+- **Timeout**: 3 seconds
+- **Fallback**: Regex filtering if LLM times out
+
+### `/api/simulate` (75 lines)
+- **Method**: POST
+- **Purpose**: Wokwi simulation generation
+- **Integration**: Direct Wokwi API communication
+- **Output**: Embeddable simulation URL + Arduino sketch
+
+### `/api/key` (39 lines)
+- **GET**: Returns configuration status
+- **POST**: Saves API key and provider preference
+- **Validation**: Provider-specific key format checking
+
+## USER INTERFACE COMPONENTS
+
+### Main Page (`+page.svelte` - 1206 lines)
+1. **Hero Section**: Primary input with skill level selection
+2. **Chat Interface**: Conversational interaction mode
+3. **Output Panel**: Wiregen diagram + build guide display
+4. **Settings Modal**: Provider selection, API key input, theme customization
+5. **History Panel**: Project archive with selection/export
+
+### Settings Modal Features
+- Provider selection grid (Anthropic Claude / DeepSeek)
+- API key input with dynamic placeholder/hints
+- Theme selection (6 visual themes)
+- Skill level selection (5 levels)
+- Age slider (6-60 years)
+- Font scale adjustment
+
+### Themes Available
+1. Deep Sea (blue)
+2. Phosphor (green)
+3. Amber (orange)
+4. Arctic (light blue)
+5. Sakura (pink)
+6. Solder (brown)
+
+### Skill Levels
+1. Monkey (beginner)
+2. Novice
+3. Builder
+4. Hacker
+5. Expert
+
+## PROMPT ENGINEERING
+
+### File: `prompts.js` (324 lines, 6 sections)
+
+1. **SYSTEM**: Main build guide prompt with wiregen JSON format
+2. **SKILL_CONTEXT**: Adjustments for 5 skill levels
+3. **CHAT_SYSTEM**: Conversational mode prompt
+4. **CLARIFY_SYSTEM**: Question selection logic
+5. **SIM_PROMPT**: Wokwi simulation generation
+6. **QUESTION_CATALOG**: 20+ pre-defined clarification questions
+
+### Output Format (Strict)
+```
+# [Project Name]
+## WIRING
+```wiregen
+{JSON diagram with coordinates}
+```
+## PARTS
+- [qty]x [Part] -- [spec]
+## CODE
+```cpp
+[Complete Arduino code]
+```
+## STEPS
+1. [Instruction]
+```
+
+## CONFIGURATION SYSTEM
+
+### File: `config.json`
+```json
+{
+  "apiKey": "",
+  "provider": "anthropic",
+  "theme": "solder",
+  "skill": "MONKEY",
+  "age": 25,
+  "fontSize": 16
+}
+```
+
+### Configuration Management (`config.js`)
+- **`loadConfig()`**: Reads from `config.json`
+- **`saveConfig(cfg)`**: Writes to `config.json`
+- **`getApiKey()`**: Returns API key from config or environment
+- **`getProvider()`**: Returns current provider
+
+## DEPENDENCIES
+
+### Package.json Structure
+```json
+{
+  "name": "mertle-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "start": "node build/index.js",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@sveltejs/adapter-node": "^5.2.0",
+    "@sveltejs/kit": "^2.15.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "playwright": "^1.59.1",
+    "svelte": "^5.0.0",
+    "vite": "^6.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
+  }
+}
+```
+
+## CODE STATISTICS
+
+### Line Counts
+- **Total Application**: ~2,800 lines (excluding node_modules)
+- **Main Page**: 1,206 lines (`src/routes/+page.svelte`)
+- **Wiregen Canvas**: 669 lines (`src/lib/wiregen/WiringCanvas.svelte`)
+- **LLM Service**: 363 lines (`src/lib/server/llm-service.js`)
+- **Prompts**: 324 lines (`src/lib/server/prompts.js`)
+- **API Endpoints**: 327 lines total (4 endpoints)
+
+### File Structure
+```
+mertlebot/
+├── src/
+│   ├── routes/
+│   │   ├── +page.svelte          # Main frontend
+│   │   └── api/                  # API endpoints
+│   │       ├── generate/
+│   │       ├── clarify/
+│   │       ├── simulate/
+│   │       └── key/
+│   ├── lib/
+│   │   ├── server/
+│   │   │   ├── llm-service.js    # LLM abstraction
+│   │   │   ├── prompts.js        # System prompts
+│   │   │   ├── config.js         # Configuration
+│   │   │   └── wokwi.js          # Simulation integration
+│   │   └── wiregen/              # Visualization engine
+│       ├── WiringCanvas.svelte   # Main canvas
+│       ├── parts/                # 10+ component types
+│       └── boards/               # 4 board types
+├── static/                       # Static assets
+├── config.json                   # Configuration
+└── package.json                  # Dependencies
+```
+
+## CURRENT IMPLEMENTATION DETAILS
+
+### Authentication Model
+- **Type**: API key-based (user provides own keys)
+- **Storage**: Single `config.json` file
+- **Scope**: Global (single user/instance)
+- **Validation**: Format checking only
+
+### State Management
+- **Local Storage**: Theme, skill, age, font scale, provider preference
+- **Session State**: Current project, chat history, generation status
+- **Configuration**: API key, provider in `config.json`
+
+### Error Handling
+- **LLM Errors**: Provider-specific error messages
+- **Stream Errors**: Connection abortion with cleanup
+- **Validation Errors**: Key format and input validation
+- **Timeout Handling**: 3-second timeouts for clarification
+
+### Performance Features
+- **Client-side Rendering**: Wiregen avoids server load
+- **Streaming**: Real-time feedback without waiting for complete response
+- **Caching**: Local storage for preferences
+- **Lazy Loading**: Component libraries loaded as needed
+
+## DEVELOPMENT TOOLS
+
+### Testing
+- **Framework**: Playwright configured
+- **Mock Mode**: Built-in test responses
+- **Error Boundaries**: Comprehensive error handling
+
+### Build & Deployment
+- **Development**: `npm run dev` (Vite dev server)
+- **Build**: `npm run build` (Vite build)
+- **Production**: `npm run start` (Node.js server)
+- **Adapter**: `@sveltejs/adapter-node`
+
+## RECENT CHANGES
+
+### Dual-Provider Implementation (Commit 27b3801)
+- Added DeepSeek API support alongside existing Anthropic
+- Created LLM service abstraction layer
+- Updated all API endpoints to use abstraction
+- Added provider selection UI
+- Maintained backward compatibility
+
+### Key Technical Decisions
+1. **Provider Abstraction**: Clean separation between LLM providers and application logic
+2. **Streaming Consistency**: Both providers support real-time streaming
+3. **Client-side Wiregen**: No API key needed for visualization
+4. **File-based Config**: Simple deployment, no database required
+
+## TECHNICAL CONSTRAINTS
+
+### Current Limitations
+- Single-user configuration (`config.json`)
+- No user management system
+- No database integration
+- File-based state persistence
+- Global API key (not user-specific)
+
+### Browser Requirements
+- Modern browser with SVG support
+- JavaScript enabled
+- CSS Custom Properties support
+- SSE (Server-Sent Events) support
+
+## INTEGRATION POINTS
+
+### External Services
+1. **Anthropic API**: Claude models (Haiku, Sonnet)
+2. **DeepSeek API**: deepseek-chat model
+3. **Wokwi API**: Circuit simulation
+4. **Wikimedia Commons**: Image references (indirect)
+
+### Development APIs
+- **SvelteKit Server Routes**: API endpoints
+- **Vite Dev Server**: Development environment
+- **Playwright**: End-to-end testing
+
+---
+**Context generated**: 2026-04-04
+**Application version**: Production-ready
+**Primary focus**: Technical architecture and implementation details
+**Excluded**: Business model opinions, pricing strategies, market analysis
