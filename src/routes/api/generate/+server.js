@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { llmService } from '$lib/server/llm-service.js';
-import { SYSTEM, SKILL_CONTEXT, CHAT_SYSTEM, ageContext } from '$lib/server/prompts.js';
+import { SYSTEM, SKILL_CONTEXT, CHAT_SYSTEM, ageContext, boardPinRefs } from '$lib/server/prompts.js';
 
 function isAbortError(err) {
   return err?.constructor?.name === 'APIUserAbortError'
@@ -41,7 +41,7 @@ export async function POST({ request }) {
 
     // Build system prompt
     const skillContext = SKILL_CONTEXT[skill] || SKILL_CONTEXT.MONKEY;
-    const buildSystem = SYSTEM + '\n\n' + skillContext + '\n\n' + ageContext(age);
+    const buildSystem = SYSTEM + boardPinRefs(prompt) + '\n\n' + skillContext + '\n\n' + ageContext(age);
     const chatSystem = CHAT_SYSTEM + '\n\n' + ageContext(age);
     const fullSystem = intent === 'BUILD' ? buildSystem : chatSystem;
 
