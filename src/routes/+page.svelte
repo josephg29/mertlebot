@@ -4,7 +4,7 @@
   const features = [
     { icon: '⚡', title: 'Instant Wiring Diagrams', desc: 'Turn ideas into professional diagrams in seconds' },
     { icon: '🔧', title: 'Complete Parts Lists', desc: 'Get exact components with specs and buying links' },
-    { icon: '💻', title: 'Ready-to-Flash Code', desc: 'Fully commented Arduino/Raspberry Pi code' },
+    { icon: '💻', title: 'Ready-to-Flash Code', desc: 'Works with Arduino, ESP32, Raspberry Pi, STM32, Pico & more' },
     { icon: '📖', title: 'Step-by-Step Guides', desc: 'Build instructions from beginner to expert' },
     { icon: '🔄', title: 'Live Simulation', desc: 'Test circuits in browser before building' },
     { icon: '🎨', title: 'Multiple Themes', desc: 'Customize the look with pixel-perfect themes' }
@@ -17,7 +17,7 @@
   ];
   
   const stats = [
-    { value: '500+', label: 'Components Supported' },
+    { value: 'ALL', label: 'Boards Supported' },
     { value: '99.9%', label: 'Accuracy Rate' },
     { value: '24/7', label: 'Uptime' }
   ];
@@ -114,8 +114,8 @@
               {animatedStats[i].current.toLocaleString()}+
             {:else if stat.value.includes('%')}
               {animatedStats[i].current.toFixed(1)}%
-            {:else if stat.value === '24/7'}
-              24/7
+            {:else if stat.value.includes('/') || isNaN(parseFloat(stat.value))}
+              {stat.value}
             {:else}
               {animatedStats[i].current.toLocaleString()}
             {/if}
