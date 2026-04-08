@@ -1,6 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { loadConfig } from './config.js';
 
+function getEnvKey(provider) {
+  return provider === 'deepseek'
+    ? process.env.DEEPSEEK_API_KEY
+    : process.env.ANTHROPIC_API_KEY;
+}
+
 /**
  * LLM Service Abstraction Layer
  * Supports both Anthropic (Claude) and DeepSeek APIs
@@ -61,10 +67,19 @@ export class LLMService {
   }
 
   /**
-   * Validate API key format
+   * Get API key: saved config first, then environment variable fallback
    */
-  validateApiKey(key) {
-    if (this.provider === 'anthropic') {
+  _getApiKey() {
+    return this.config.apiKey || getEnvKey(this.provider) || null;
+  }
+
+  /**
+   * Validate API key format
+   * @param {string} key
+   * @param {string} [provider] - provider to validate against (defaults to current provider)
+   */
+  validateApiKey(key, provider = this.provider) {
+    if (provider === 'anthropic') {
       return /^sk-ant-/.test(key);
     } else {
       // DeepSeek keys typically start with sk- but not always
@@ -104,7 +119,7 @@ export class LLMService {
   // ===========================================================================
 
   async _anthropicClassifyIntent(prompt, systemPrompt) {
-    const apiKey = this.config.apiKey;
+    const apiKey = this._getApiKey();
     if (!apiKey) throw new Error('API key not configured');
 
     const client = new Anthropic({ apiKey });
@@ -126,7 +141,7 @@ export class LLMService {
 
   async _anthropicGenerateStream(options) {
     const { prompt, system, skill, age, clarifications, intent } = options;
-    const apiKey = this.config.apiKey;
+    const apiKey = this._getApiKey();
     if (!apiKey) throw new Error('API key not configured');
 
     const client = new Anthropic({ apiKey });
@@ -149,7 +164,7 @@ export class LLMService {
   }
 
   async _anthropicClarify(prompt, availableQuestions, systemPrompt) {
-    const apiKey = this.config.apiKey;
+    const apiKey = this._getApiKey();
     if (!apiKey) return []; // Silently skip if no key
 
     const client = new Anthropic({ apiKey });
@@ -184,7 +199,7 @@ export class LLMService {
   }
 
   async _anthropicSimulate(prompt, guide, systemPrompt) {
-    const apiKey = this.config.apiKey;
+    const apiKey = this._getApiKey();
     if (!apiKey) throw new Error('API key not configured');
 
     const client = new Anthropic({ apiKey });
@@ -207,7 +222,7 @@ export class LLMService {
   // ===========================================================================
 
   async _deepseekClassifyIntent(prompt, systemPrompt) {
-    const apiKey = this.config.apiKey;
+    const apiKey = this._getApiKey();
     if (!apiKey) throw new Error('API key not configured');
 
     try {
@@ -243,7 +258,7 @@ export class LLMService {
 
   async _deepseekGenerateStream(options) {
     const { prompt, system, skill, age, clarifications, intent } = options;
-    const apiKey = this.config.apiKey;
+    const apiKey = this._getApiKey();
     if (!apiKey) throw new Error('API key not configured');
 
     const userContent = (intent === 'BUILD' && clarifications) ? `${prompt}\n\n${clarifications}` : prompt;
@@ -281,7 +296,7 @@ export class LLMService {
   }
 
   async _deepseekClarify(prompt, availableQuestions, systemPrompt) {
-    const apiKey = this.config.apiKey;
+    const apiKey = this._getApiKey();
     if (!apiKey) return []; // Silently skip if no key
 
     const allIds = availableQuestions.map(q => q.id).join(', ');
@@ -330,7 +345,7 @@ export class LLMService {
   }
 
   async _deepseekSimulate(prompt, guide, systemPrompt) {
-    const apiKey = this.config.apiKey;
+    const apiKey = this._getApiKey();
     if (!apiKey) throw new Error('API key not configured');
 
     const response = await fetch('https://api.deepseek.com/chat/completions', {

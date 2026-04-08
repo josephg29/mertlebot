@@ -13,7 +13,12 @@ export function loadConfig() {
 }
 
 export function saveConfig(cfg) {
-  writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  try {
+    writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  } catch (err) {
+    console.error('Failed to save config:', err.message);
+    throw new Error('Could not save configuration — check file permissions');
+  }
 }
 
 export function getApiKey() {

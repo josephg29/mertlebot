@@ -9,6 +9,16 @@
     { href: '/contact', label: 'CONTACT', icon: Mail },
     { href: '/pricing', label: 'PRICING', icon: BadgeDollarSign }
   ];
+
+  const THEMES = ['solder', 'deep-sea', 'phosphor', 'amber', 'arctic', 'sakura'];
+
+  function cycleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'solder';
+    const idx = THEMES.indexOf(current);
+    const next = THEMES[(idx + 1) % THEMES.length];
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('mrt-theme', next); } catch {}
+  }
 </script>
 
 <nav class="main-nav">
@@ -33,7 +43,7 @@
   </div>
 
   <div class="nav-actions">
-    <button class="nav-action-btn" title="Toggle theme">
+    <button class="nav-action-btn" title="Toggle theme" on:click={cycleTheme}>
       <span class="action-icon"><Palette size={16} /></span>
     </button>
     <a href="/build" class="cta-btn">

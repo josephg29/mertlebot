@@ -4,9 +4,13 @@ import { llmService } from '$lib/server/llm-service.js';
 
 export async function GET() {
   const config = loadConfig();
-  return json({ 
-    configured: !!config.apiKey,
-    provider: config.provider || 'anthropic'
+  const provider = config.provider || 'anthropic';
+  const hasEnvKey = provider === 'deepseek'
+    ? !!process.env.DEEPSEEK_API_KEY
+    : !!process.env.ANTHROPIC_API_KEY;
+  return json({
+    configured: !!config.apiKey || hasEnvKey,
+    provider
   });
 }
 
@@ -17,11 +21,12 @@ export async function POST({ request }) {
   
   if (!key) return json({ error: 'Key required' }, { status: 400 });
   
-  // Validate key format based on provider
-  if (!llmService.validateApiKey(key)) {
-    const providerInfo = llmService.getProviderInfo();
-    return json({ 
-      error: `Invalid key format for ${providerInfo.name} — expected ${providerInfo.keyExample}` 
+  // Validate key format based on the provider being saved (not the current active provider)
+  if (!llmService.validateApiKey(key, provider)) {
+    const providerNames = { anthropic: 'Anthropic Claude', deepseek: 'DeepSeek' };
+    const keyExamples = { anthropic: 'sk-ant-abc123...', deepseek: 'sk-1234567890abcdef...' };
+    return json({
+      error: `Invalid key format for ${providerNames[provider] || provider} — expected ${keyExamples[provider] || 'a valid API key'}`
     }, { status: 400 });
   }
 

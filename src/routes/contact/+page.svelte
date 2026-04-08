@@ -67,23 +67,16 @@
     isSubmitting = true;
     submitError = '';
     
-    // Fake submission for demo
+    // Simulate submission delay
     await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    // Simulate random success/failure for demo
-    const success = Math.random() > 0.2;
-    
-    if (success) {
-      submitSuccess = true;
-      formData = { name: '', email: '', subject: '', message: '', category: 'general' };
-      
-      // Reset success message after 5 seconds
-      setTimeout(() => {
-        submitSuccess = false;
-      }, 5000);
-    } else {
-      submitError = 'Something went wrong. Please try again or email us directly.';
-    }
+
+    submitSuccess = true;
+    formData = { name: '', email: '', subject: '', message: '', category: 'general' };
+
+    // Reset success message after 5 seconds
+    setTimeout(() => {
+      submitSuccess = false;
+    }, 5000);
     
     isSubmitting = false;
   }
