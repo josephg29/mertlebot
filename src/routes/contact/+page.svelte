@@ -1,4 +1,6 @@
 <script>
+  import { Mail, Wrench, Briefcase, Twitter, AlertTriangle, Clock, Globe, Zap, BadgeDollarSign, Check } from 'lucide-svelte';
+
   let formData = {
     name: '',
     email: '',
@@ -48,10 +50,10 @@
   ];
   
   const contactMethods = [
-    { icon: '📧', title: 'Email', details: 'contact@mertle.bot', desc: 'General inquiries' },
-    { icon: '🛠️', title: 'Support', details: 'support@mertle.bot', desc: 'Technical help & bugs' },
-    { icon: '💼', title: 'Business', details: 'partnerships@mertle.bot', desc: 'Partnerships & enterprise' },
-    { icon: '🐦', title: 'Social', details: '@mertlebot', desc: 'Twitter & community' }
+    { icon: Mail, title: 'Email', details: 'contact@mertle.bot', desc: 'General inquiries' },
+    { icon: Wrench, title: 'Support', details: 'support@mertle.bot', desc: 'Technical help & bugs' },
+    { icon: Briefcase, title: 'Business', details: 'partnerships@mertle.bot', desc: 'Partnerships & enterprise' },
+    { icon: Twitter, title: 'Social', details: '@mertlebot', desc: 'Twitter & community' }
   ];
   
   let openFaqIndex = null;
@@ -120,7 +122,7 @@
           
           {#if submitSuccess}
             <div class="success-message">
-              <div class="success-icon">✓</div>
+              <div class="success-icon"><Check size={48} /></div>
               <div class="success-content">
                 <div class="success-title">MESSAGE SENT!</div>
                 <div class="success-desc">
@@ -198,7 +200,7 @@
               
               {#if submitError}
                 <div class="error-message">
-                  <div class="error-icon">⚠️</div>
+                  <div class="error-icon"><AlertTriangle size={20} /></div>
                   <div class="error-text">{submitError}</div>
                 </div>
               {/if}
@@ -225,7 +227,7 @@
           <div class="contact-methods">
             {#each contactMethods as method}
               <div class="contact-method">
-                <div class="method-icon">{method.icon}</div>
+                <div class="method-icon"><svelte:component this={method.icon} size={24} /></div>
                 <div class="method-content">
                   <div class="method-title">{method.title}</div>
                   <div class="method-details">{method.details}</div>
@@ -236,7 +238,7 @@
           </div>
           
           <div class="info-card">
-            <div class="card-icon">⏰</div>
+            <div class="card-icon"><Clock size={24} /></div>
             <div class="card-content">
               <div class="card-title">Response Time</div>
               <div class="card-desc">
@@ -246,7 +248,7 @@
           </div>
           
           <div class="info-card">
-            <div class="card-icon">🌍</div>
+            <div class="card-icon"><Globe size={24} /></div>
             <div class="card-content">
               <div class="card-title">Community</div>
               <div class="card-desc">
@@ -296,11 +298,11 @@
         </p>
         <div class="cta-actions">
           <a href="/build" class="cta-btn primary">
-            <span class="btn-icon">⚡</span>
+            <span class="btn-icon"><Zap size={16} /></span>
             <span class="btn-text">LAUNCH BUILDER</span>
           </a>
           <a href="/pricing" class="cta-btn secondary">
-            <span class="btn-icon">💰</span>
+            <span class="btn-icon"><BadgeDollarSign size={16} /></span>
             <span class="btn-text">VIEW PRICING</span>
           </a>
         </div>
@@ -474,7 +476,9 @@
   }
   
   .success-icon {
-    font-size: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     color: var(--cta);
     margin-bottom: 20px;
     filter: drop-shadow(2px 2px 0 rgba(0,0,0,0.4));
@@ -505,8 +509,10 @@
   }
   
   .error-icon {
-    font-size: 20px;
+    display: inline-flex;
+    align-items: center;
     flex-shrink: 0;
+    color: var(--danger);
   }
   
   .error-text {
@@ -590,8 +596,10 @@
   }
   
   .method-icon {
-    font-size: 24px;
+    display: inline-flex;
+    align-items: center;
     flex-shrink: 0;
+    color: var(--primary);
     filter: drop-shadow(1px 1px 0 rgba(0,0,0,0.4));
   }
   
@@ -630,8 +638,10 @@
   }
   
   .card-icon {
-    font-size: 24px;
+    display: inline-flex;
+    align-items: center;
     flex-shrink: 0;
+    color: var(--primary);
     filter: drop-shadow(1px 1px 0 rgba(0,0,0,0.4));
   }
   
@@ -852,6 +862,11 @@
     box-shadow: 4px 8px 0 rgba(0,0,0,0.4);
   }
   
+  .btn-icon {
+    display: inline-flex;
+    align-items: center;
+  }
+
   /* Responsive Design */
   @media (max-width: 1024px) {
     .contact-grid {

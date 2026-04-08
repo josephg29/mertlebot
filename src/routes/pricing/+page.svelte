@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { Check, X, Mail, Zap } from 'lucide-svelte';
   
   const plans = [
     {
@@ -128,7 +129,7 @@
               {#each plan.features as feature}
                 <div class="feature-item {feature.included ? 'included' : 'excluded'}">
                   <span class="feature-icon">
-                    {feature.included ? '✓' : '✗'}
+                    {#if feature.included}<Check size={12} />{:else}<X size={12} />{/if}
                   </span>
                   <span class="feature-text">{feature.text}</span>
                 </div>
@@ -176,11 +177,11 @@
         </p>
         <div class="cta-actions">
           <a href="/contact" class="cta-btn primary">
-            <span class="btn-icon">✉️</span>
+            <span class="btn-icon"><Mail size={16} /></span>
             <span class="btn-text">CONTACT US</span>
           </a>
           <a href="/build" class="cta-btn secondary">
-            <span class="btn-icon">⚡</span>
+            <span class="btn-icon"><Zap size={16} /></span>
             <span class="btn-text">TRY FREE VERSION</span>
           </a>
         </div>
@@ -417,11 +418,13 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    font-family: 'Press Start 2P', monospace;
-    font-size: 10px;
     background: var(--surface);
     border: 2px solid var(--border-col);
-    -webkit-font-smoothing: none;
+  }
+
+  .btn-icon {
+    display: inline-flex;
+    align-items: center;
   }
   
   .feature-item.included .feature-icon {
