@@ -1,7 +1,10 @@
 <script>
   import { page } from '$app/stores';
-  import { House, Zap, Info, Mail, BadgeDollarSign, Bot, Palette, Rocket } from 'lucide-svelte';
+  import { House, Zap, Info, Mail, BadgeDollarSign, Bot, Palette, Rocket, LogIn, UserPlus, LogOut, User } from 'lucide-svelte';
+  import { authStore, logout } from '$lib/auth-store.js';
 
+  export let auth = $authStore;
+  
   const navItems = [
     { href: '/', label: 'HOME', icon: House },
     { href: '/build', label: 'BUILD', icon: Zap },
@@ -18,6 +21,20 @@
     const next = THEMES[(idx + 1) % THEMES.length];
     document.documentElement.setAttribute('data-theme', next);
     try { localStorage.setItem('mrt-theme', next); } catch {}
+  }
+
+  async function handleLogout() {
+    await logout();
+  }
+
+  function openLogin() {
+    // This will be handled by the build page
+    window.location.href = '/build#login';
+  }
+
+  function openRegister() {
+    // This will be handled by the build page
+    window.location.href = '/build#register';
   }
 </script>
 
@@ -46,6 +63,23 @@
     <button class="nav-action-btn" title="Toggle theme" on:click={cycleTheme}>
       <span class="action-icon"><Palette size={16} /></span>
     </button>
+    
+    {#if auth.user}
+      <div class="nav-user">
+        <span class="nav-username">{auth.user.username}</span>
+        <button class="nav-action-btn" title="Logout" on:click={handleLogout}>
+          <span class="action-icon"><LogOut size={16} /></span>
+        </button>
+      </div>
+    {:else}
+      <button class="nav-action-btn" title="Login" on:click={openLogin}>
+        <span class="action-icon"><LogIn size={16} /></span>
+      </button>
+      <button class="nav-action-btn" title="Register" on:click={openRegister}>
+        <span class="action-icon"><UserPlus size={16} /></span>
+      </button>
+    {/if}
+    
     <a href="/build" class="cta-btn">
       <span class="cta-icon"><Rocket size={14} /></span>
       <span class="cta-text">START BUILDING</span>
@@ -225,6 +259,19 @@
 
   .cta-text {
     font-size: 8px;
+  }
+
+  .nav-user {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .nav-username {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 7px;
+    color: var(--text-muted);
+    -webkit-font-smoothing: none;
   }
 
   @media (max-width: 1024px) {

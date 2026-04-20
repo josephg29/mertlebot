@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import WiringCanvas from '$lib/wiregen/WiringCanvas.svelte';
   import { mount, unmount } from 'svelte';
+  import { authStore, login, register, logout } from '$lib/auth-store.js';
 
   /* ── Shared SVG icons ── */
   const ICON_TRASH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2 0 0,1-2,2H8a2,2 0 0,1-2-2L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4a1,1 0 0,1,1-1h4a1,1 0 0,1,1,1v2"/></svg>';
@@ -50,6 +51,18 @@
   let _del = { cb: null, guide: null, prompt: null };
   let _settingsTrigger = null;
   let _wiregenInstances = [];
+  
+  /* ── Auth state ── */
+  let showLoginModal = false;
+  let showRegisterModal = false;
+  let authError = '';
+  let authLoading = false;
+  let loginEmail = '';
+  let loginPassword = '';
+  let registerEmail = '';
+  let registerUsername = '';
+  let registerPassword = '';
+  let registerConfirmPassword = '';
 
   /* ── Clarify state ── */
   let clarifyQuestions = [], clarifyAnswers = {}, clarifyIdx = 0, clarifyOriginalPrompt = '';
@@ -1012,7 +1025,90 @@
     renderHeroRecent();
     checkKey();
     heroInput.focus();
+    
+    // Handle hash navigation for auth
+    handleHashNavigation();
+    window.addEventListener('hashchange', handleHashNavigation);
   });
+
+  /* ── Auth Functions ── */
+  function handleHashNavigation() {
+    const hash = window.location.hash;
+    if (hash === '#login') {
+      showLoginModal = true;
+      showRegisterModal = false;
+      authError = '';
+    } else if (hash === '#register') {
+      showRegisterModal = true;
+      showLoginModal = false;
+      authError = '';
+    } else {
+      showLoginModal = false;
+      showRegisterModal = false;
+    }
+  }
+
+  async function handleLogin() {
+    if (!loginEmail || !loginPassword) {
+      authError = 'Email and password are required';
+      return;
+    }
+
+    authLoading = true;
+    authError = '';
+
+    const result = await login(loginEmail, loginPassword);
+    
+    if (result.success) {
+      showLoginModal = false;
+      loginEmail = '';
+      loginPassword = '';
+      window.location.hash = '';
+    } else {
+      authError = result.error || 'Login failed';
+    }
+
+    authLoading = false;
+  }
+
+  async function handleRegister() {
+    if (!registerEmail || !registerUsername || !registerPassword || !registerConfirmPassword) {
+      authError = 'All fields are required';
+      return;
+    }
+
+    if (registerPassword !== registerConfirmPassword) {
+      authError = 'Passwords do not match';
+      return;
+    }
+
+    if (registerPassword.length < 8) {
+      authError = 'Password must be at least 8 characters';
+      return;
+    }
+
+    authLoading = true;
+    authError = '';
+
+    const result = await register(registerEmail, registerUsername, registerPassword);
+    
+    if (result.success) {
+      showRegisterModal = false;
+      registerEmail = '';
+      registerUsername = '';
+      registerPassword = '';
+      registerConfirmPassword = '';
+      window.location.hash = '';
+    } else {
+      authError = result.error || 'Registration failed';
+    }
+
+    authLoading = false;
+  }
+
+  async function handleLogout() {
+    await logout();
+  }
 </script>
 
 <!-- ═══ HERO ═══ -->
@@ -1204,3 +1300,56 @@
     <div class="clarify-inner" id="clarifyInner"></div>
   </div>
 </div>
+
+<!-- ═══ AUTH MODALS ═══ -->
+{#if showLoginModal}
+<div class="modal-bg" id="loginModalBg">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
+    <div class="modal-title" id="loginModalTitle">LOGIN</div>
+    <div class="modal-section">
+      {#if authError}
+        <div class="modal-error">{authError}</div>
+      {/if}
+      <div class="modal-label">Email</div>
+      <input class="modal-input" type="email" placeholder="your@email.com" bind:value={loginEmail} disabled={authLoading}/>
+      <div class="modal-label">Password</div>
+      <input class="modal-input" type="password" placeholder="••••••••" bind:value={loginPassword} disabled={authLoading}/>
+      <button type="button" class="modal-btn" on:click={handleLogin} disabled={authLoading}>
+        {#if authLoading}LOGGING IN...{:else}LOGIN{/if}
+      </button>
+      <div class="modal-hint">
+        Don't have an account? <a href="javascript:void(0)" on:click={() => { showLoginModal = false; showRegisterModal = true; }}>Register</a>
+      </div>
+    </div>
+    <button type="button" class="modal-close-btn" on:click={() => showLoginModal = false}>CLOSE</button>
+  </div>
+</div>
+{/if}
+
+{#if showRegisterModal}
+<div class="modal-bg" id="registerModalBg">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="registerModalTitle">
+    <div class="modal-title" id="registerModalTitle">REGISTER</div>
+    <div class="modal-section">
+      {#if authError}
+        <div class="modal-error">{authError}</div>
+      {/if}
+      <div class="modal-label">Email</div>
+      <input class="modal-input" type="email" placeholder="your@email.com" bind:value={registerEmail} disabled={authLoading}/>
+      <div class="modal-label">Username</div>
+      <input class="modal-input" type="text" placeholder="maker123" bind:value={registerUsername} disabled={authLoading}/>
+      <div class="modal-label">Password</div>
+      <input class="modal-input" type="password" placeholder="••••••••" bind:value={registerPassword} disabled={authLoading}/>
+      <div class="modal-label">Confirm Password</div>
+      <input class="modal-input" type="password" placeholder="••••••••" bind:value={registerConfirmPassword} disabled={authLoading}/>
+      <button type="button" class="modal-btn" on:click={handleRegister} disabled={authLoading}>
+        {#if authLoading}CREATING ACCOUNT...{:else}REGISTER{/if}
+      </button>
+      <div class="modal-hint">
+        Already have an account? <a href="javascript:void(0)" on:click={() => { showRegisterModal = false; showLoginModal = true; }}>Login</a>
+      </div>
+    </div>
+    <button type="button" class="modal-close-btn" on:click={() => showRegisterModal = false}>CLOSE</button>
+  </div>
+</div>
+{/if}
