@@ -1,13 +1,23 @@
 <script>
   import '../app.css';
   import Navigation from '$lib/components/Navigation.svelte';
+  import { initAuth, authStore } from '$lib/auth-store.js';
+  import { onMount } from 'svelte';
   
   const { children } = $props();
+  
+  onMount(() => {
+    initAuth();
+  });
+  
+  // Export auth store for use in pages
+  export let data;
+  $: auth = $authStore;
 </script>
 
-<Navigation />
+<Navigation {auth} />
 <main class="site-content">
-  {@render children()}
+  {@render children({ auth })}
 </main>
 
 <style>
