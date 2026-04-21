@@ -3,6 +3,12 @@ config.json
 /build/
 !src/routes/build/
 .svelte-kit/
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/backups/
 .env
 .env.local
 .env.production
+.DS_Store
+artifacts/

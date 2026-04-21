@@ -1,27 +1,20 @@
 import { json } from '@sveltejs/kit';
-import { invalidateSession } from '$lib/server/auth.js';
+import { SESSION_COOKIE } from '$lib/server/auth.js';
+import { getSession, deleteSession, logAuthEvent } from '$lib/server/db.js';
 
-export async function POST({ cookies, locals }) {
-  try {
-    const sessionId = cookies.get('auth_session');
-    if (sessionId) {
-      await invalidateSession(sessionId);
+export async function POST({ request, cookies }) {
+  const token = cookies.get(SESSION_COOKIE);
+  const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
+  const ua = request.headers.get('user-agent') ?? '';
+
+  if (token) {
+    const session = getSession(token);
+    if (session) {
+      logAuthEvent('logout', { userId: session.user_id, ip, userAgent: ua });
     }
-
-    // Clear session cookie
-    const sessionCookie = (await import('$lib/server/auth.js')).lucia.createBlankSessionCookie();
-    cookies.set(sessionCookie.name, sessionCookie.value, {
-      path: '.',
-      ...sessionCookie.attributes
-    });
-
-    return json({ 
-      success: true,
-      redirect: '/'
-    });
-
-  } catch (error) {
-    console.error('Logout error:', error);
-    return json({ error: 'Logout failed' }, { status: 500 });
+    deleteSession(token);
+    cookies.delete(SESSION_COOKIE, { path: '/' });
   }
+
+  return json({ ok: true });
 }

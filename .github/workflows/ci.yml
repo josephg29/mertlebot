@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+        env:
+          # Prevent the build from failing due to missing API key
+          ANTHROPIC_API_KEY: dummy-ci-key
+
+      - run: npm test
+        env:
+          DATA_DIR: /tmp/mertle-ci-data
+          NODE_ENV: test
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t mertle-bot .
+
+      - name: Smoke-test container health
+        run: |
+          docker run -d --name mertle-ci \
+            -e ANTHROPIC_API_KEY=dummy-ci-key \
+            -e DATA_DIR=/data \
+            -p 3000:3000 \
+            mertle-bot
+          # Wait for startup (up to 30s)
+          for i in $(seq 1 15); do
+            sleep 2
+            STATUS=$(docker inspect --format='{{.State.Status}}' mertle-ci 2>/dev/null || echo "missing")
+            if [ "$STATUS" = "running" ]; then
+              HEALTH=$(curl -sf http://localhost:3000/api/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
+              if [ "$HEALTH" = "ok" ] || [ "$HEALTH" = "degraded" ]; then
+                echo "Health: $HEALTH"
+                docker stop mertle-ci
+                exit 0
+              fi
+            fi
+          done
+          echo "Container failed to report health"
+          docker logs mertle-ci
+          docker stop mertle-ci || true
+          exit 1

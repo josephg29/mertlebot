@@ -1,3 +1,14 @@
+import { SESSION_COOKIE, deriveCsrfToken } from '$lib/server/auth.js';
+import { getSession, getUserById } from '$lib/server/db.js';
+
+// Routes that require an authenticated session
+const PROTECTED_PREFIXES = [
+  '/api/generate', '/api/clarify', '/api/simulate', '/api/key',
+  '/api/user', '/api/projects', '/api/folders',
+];
+// Routes that are part of auth itself — never apply session guard here
+const AUTH_PREFIXES = ['/api/auth/'];
+
 /* ── In-memory rate limiter ── */
 const rateLimitMap = new Map();
 const WINDOW_MS = 60 * 1000;
@@ -24,31 +35,31 @@ function getEndpointType(path) {
 function checkRateLimit(identifier, endpointType) {
   const now = Date.now();
   const limits = RATE_LIMITS[endpointType] || RATE_LIMITS.default;
-  
+
   let entry = rateLimitMap.get(identifier);
   if (!entry || now > entry.resetAt) {
-    entry = { 
-      count: 0, 
+    entry = {
+      count: 0,
       burstCount: 0,
       resetAt: now + WINDOW_MS,
       burstResetAt: now + 10000 // 10 second burst window
     };
   }
-  
+
   // Check burst limit first
   if (now > entry.burstResetAt) {
     entry.burstCount = 0;
     entry.burstResetAt = now + 10000;
   }
-  
+
   entry.count++;
   entry.burstCount++;
-  
+
   rateLimitMap.set(identifier, entry);
-  
+
   const burstOk = entry.burstCount <= limits.burst;
   const windowOk = entry.count <= limits.limit;
-  
+
   return {
     ok: burstOk && windowOk,
     remaining: Math.max(0, limits.limit - entry.count),
@@ -68,25 +79,57 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-// Authentication helper
-async function getUserFromSession(cookies) {
-  try {
-    const sessionId = cookies.get('auth_session');
-    if (!sessionId) return null;
-    
-    const { validateSession } = await import('$lib/server/auth.js');
-    const { user } = await validateSession(sessionId);
-    return user;
-  } catch {
-    return null;
-  }
-}
-
 export async function handle({ event, resolve }) {
   const path = event.url.pathname;
 
-  // Add user to event locals for use in routes
-  event.locals.user = await getUserFromSession(event.cookies);
+  // ── Session guard on protected API routes ────────────────────────────────
+  const isProtected = PROTECTED_PREFIXES.some(p => path.startsWith(p));
+  const isAuthRoute  = AUTH_PREFIXES.some(p => path.startsWith(p));
+
+  if (isProtected && !isAuthRoute) {
+    const token = event.cookies.get(SESSION_COOKIE);
+    if (!token) {
+      return new Response(JSON.stringify({ error: 'Authentication required' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const session = getSession(token);
+    if (!session) {
+      event.cookies.delete(SESSION_COOKIE, { path: '/' });
+      return new Response(JSON.stringify({ error: 'Session expired — please log in again' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // CSRF check for mutating requests
+    const method = event.request.method;
+    if (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') {
+      const csrfHeader = event.request.headers.get('x-csrf-token');
+      const expected = deriveCsrfToken(token);
+      if (csrfHeader !== expected) {
+        return new Response(JSON.stringify({ error: 'Invalid CSRF token' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    event.locals.session = session;
+
+    // Optional verification gate — set REQUIRE_EMAIL_VERIFICATION=true to enable
+    if (process.env.REQUIRE_EMAIL_VERIFICATION === 'true') {
+      const user = getUserById(session.user_id);
+      if (!user?.email_verified_at) {
+        return new Response(JSON.stringify({ error: 'Please verify your email address to use this feature' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    }
+  }
 
   if (path.startsWith('/api/')) {
     // Same-origin CORS check
@@ -99,21 +142,16 @@ export async function handle({ event, resolve }) {
       });
     }
 
-    // Rate limiting with user-based identifiers
+    // Rate limiting — use session user ID for authenticated requests, IP for anonymous
     const endpointType = getEndpointType(path);
-    let identifier;
-    
-    if (event.locals.user) {
-      // Use user ID for authenticated users
-      identifier = `user:${event.locals.user.userId}:${endpointType}`;
-    } else {
-      // Use IP for anonymous users
-      identifier = `ip:${event.getClientAddress()}:${endpointType}`;
-    }
-    
+    const userId = event.locals.session?.user_id;
+    const identifier = userId
+      ? `user:${userId}:${endpointType}`
+      : `ip:${event.getClientAddress()}:${endpointType}`;
+
     const limit = checkRateLimit(identifier, endpointType);
     if (!limit.ok) {
-      return new Response(JSON.stringify({ 
+      return new Response(JSON.stringify({
         error: 'Too many requests — please wait a moment',
         retryAfter: Math.max(limit.reset - Math.ceil(Date.now() / 1000), limit.burstReset - Math.ceil(Date.now() / 1000))
       }), {
@@ -140,7 +178,7 @@ export async function handle({ event, resolve }) {
     "script-src 'self' 'unsafe-inline'; " +
     "connect-src 'self'; " +
     "frame-src https://wokwi.com; " +
-    "img-src 'self' data:;"
+    "img-src 'self' data: https:;"
   );
   response.headers.delete('x-powered-by');
 

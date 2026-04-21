@@ -1,30 +1,27 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { getDb } from './db.js';
 
-const CONFIG_PATH = join(process.cwd(), 'config.json');
-
-export function loadConfig() {
+export function getApiKey() {
   try {
-    if (existsSync(CONFIG_PATH)) {
-      return JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'));
-    }
-  } catch { /* ignore corrupt file */ }
-  return {};
-}
-
-export function saveConfig(cfg) {
-  try {
-    writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
-  } catch (err) {
-    console.error('Failed to save config:', err.message);
-    throw new Error('Could not save configuration — check file permissions');
+    const row = getDb().prepare("SELECT value FROM config WHERE key = 'apiKey'").get();
+    return row?.value || process.env.ANTHROPIC_API_KEY || null;
+  } catch {
+    return process.env.ANTHROPIC_API_KEY || null;
   }
 }
 
-export function getApiKey() {
-  return loadConfig().apiKey || process.env.ANTHROPIC_API_KEY || process.env.DEEPSEEK_API_KEY || null;
+export function saveApiKey(key) {
+  getDb().prepare(`
+    INSERT INTO config (key, value, updated_at) VALUES ('apiKey', ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(key);
 }
 
-export function getProvider() {
-  return loadConfig().provider || 'anthropic';
+// Legacy shim — kept so any lingering callers don't crash during transition
+export function loadConfig() {
+  const apiKey = getApiKey();
+  return apiKey ? { apiKey } : {};
+}
+
+export function saveConfig(cfg) {
+  if (cfg.apiKey) saveApiKey(cfg.apiKey);
 }

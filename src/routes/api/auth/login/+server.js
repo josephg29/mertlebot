@@ -1,40 +1,67 @@
 import { json } from '@sveltejs/kit';
-import { verifyUser, createSession } from '$lib/server/auth.js';
+import {
+  validateEmail, verifyPassword, DUMMY_HASH,
+  generateSessionToken, sessionExpiresAt, deriveCsrfToken,
+  SESSION_COOKIE, sessionCookieOptions,
+  isAccountLocked, shouldLock, lockoutExpiry,
+} from '$lib/server/auth.js';
+import {
+  getUserByEmail, createSession, updateFailedAttempts, resetFailedAttempts, logAuthEvent, getUserById,
+} from '$lib/server/db.js';
 
 export async function POST({ request, cookies }) {
-  try {
-    const body = await request.json();
-    const { email, password } = body;
+  const body = await request.json().catch(() => null);
+  if (!body) return json({ error: 'Invalid request body' }, { status: 400 });
 
-    // Validation
-    if (!email || !password) {
-      return json({ error: 'Email and password are required' }, { status: 400 });
-    }
+  const { email, password } = body;
+  const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
+  const ua = request.headers.get('user-agent') ?? '';
 
-    // Verify user
-    const user = await verifyUser(email, password);
-    if (!user) {
-      return json({ error: 'Invalid email or password' }, { status: 401 });
-    }
+  const emailErr = validateEmail(email);
+  if (emailErr) return json({ error: emailErr }, { status: 400 });
 
-    // Create session
-    const session = await createSession(user.id);
-    
-    // Set session cookie
-    const sessionCookie = (await import('$lib/server/auth.js')).lucia.createSessionCookie(session.id);
-    cookies.set(sessionCookie.name, sessionCookie.value, {
-      path: '.',
-      ...sessionCookie.attributes
-    });
+  if (!password) return json({ error: 'Password is required' }, { status: 400 });
 
-    return json({ 
-      success: true, 
-      user: { id: user.id, email: user.email, username: user.username },
-      redirect: '/'
-    });
+  const user = getUserByEmail(email);
 
-  } catch (error) {
-    console.error('Login error:', error);
-    return json({ error: 'Login failed' }, { status: 500 });
+  if (!user) {
+    // Constant-time dummy compare to prevent user enumeration via timing
+    await verifyPassword(password, DUMMY_HASH);
+    logAuthEvent('login_unknown', { email, ip, userAgent: ua });
+    return json({ error: 'Invalid email or password' }, { status: 401 });
   }
+
+  if (isAccountLocked(user)) {
+    const minutesLeft = Math.ceil((user.locked_until - Date.now()) / 60_000);
+    logAuthEvent('login_locked', { userId: user.id, email, ip, userAgent: ua });
+    return json({ error: `Account locked — try again in ${minutesLeft} minute(s)` }, { status: 429 });
+  }
+
+  const valid = await verifyPassword(password, user.password_hash);
+
+  if (!valid) {
+    const newAttempts = user.failed_attempts + 1;
+    const lock = shouldLock(newAttempts);
+    updateFailedAttempts(user.id, newAttempts, lock ? lockoutExpiry() : 0);
+    logAuthEvent(lock ? 'account_locked' : 'login_failed', { userId: user.id, email, ip, userAgent: ua });
+
+    if (lock) {
+      return json({ error: 'Too many failed attempts — account locked for 15 minutes' }, { status: 429 });
+    }
+    const remaining = 5 - newAttempts;
+    return json({ error: `Invalid email or password — ${remaining} attempt(s) remaining` }, { status: 401 });
+  }
+
+  resetFailedAttempts(user.id);
+
+  const token = generateSessionToken();
+  createSession(token, user.id, sessionExpiresAt(), ip, ua);
+  logAuthEvent('login', { userId: user.id, email, ip, userAgent: ua });
+
+  const fullUser = getUserById(user.id);
+
+  const secure = request.url.startsWith('https');
+  cookies.set(SESSION_COOKIE, token, sessionCookieOptions(secure));
+
+  return json({ ok: true, user: { id: user.id, email: user.email }, csrfToken: deriveCsrfToken(token), emailVerified: !!fullUser?.email_verified_at });
 }

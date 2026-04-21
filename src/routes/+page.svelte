@@ -1,12 +1,15 @@
 <script>
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import WiringCanvas from '$lib/wiregen/WiringCanvas.svelte';
+  import InstructionBook from '$lib/InstructionBook.svelte';
   import { mount, unmount } from 'svelte';
-  import { authStore, login, register, logout } from '$lib/auth-store.js';
+  import { extractStepGroups, stripMarkdown, summarizeSupport, repairGuide, SIM_SUPPORTED_COMPONENT_TYPES } from '$lib/projectSupport.js';
 
   /* ── Shared SVG icons ── */
   const ICON_TRASH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2 0 0,1-2,2H8a2,2 0 0,1-2-2L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4a1,1 0 0,1,1-1h4a1,1 0 0,1,1,1v2"/></svg>';
   const ICON_CHECK = '<svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1,5 4,8 9,2"/></svg>';
+  const ICON_DOWNLOAD = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="M21,15v4a2,2 0 0,1-2,2H5a2,2 0 0,1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 
   /* ── Step instruction-book icons (pixel-art style) ── */
   const STEP_ICONS = {
@@ -18,6 +21,70 @@
     default:  '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2"/><path d="M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42"/><path d="M19.78 4.22l-1.42 1.42M5.64 18.36l-1.42 1.42"/></svg>'
   };
   const STEP_LABELS = { wire: 'WIRE', code: 'CODE', power: 'POWER', test: 'TEST', assemble: 'BUILD', default: 'STEP' };
+  const HERO_EXAMPLES = [
+    'a motion-activated light',
+    'a temperature sensor with LCD display',
+    'a sound-reactive LED strip',
+    'a soil moisture alert system',
+    'a servo-controlled door lock',
+    'a WiFi weather station'
+  ];
+  const SKILL_HELP = {
+    MONKEY: 'Maximum hand-holding, no experience needed.',
+    NOVICE: 'Friendly explanations with beginner-safe wiring and upload steps.',
+    BUILDER: 'Balanced guidance for makers comfortable assembling circuits.',
+    HACKER: 'Assumes comfort with circuits, debugging, and flashing firmware.',
+    EXPERT: 'Moves fast with concise explanations and fewer training wheels.'
+  };
+  const BUILD_STATUS_STEPS = [
+    'Understanding your idea...',
+    'Selecting components...',
+    'Writing the code...',
+    'Creating wiring diagram...',
+    'Building step-by-step guide...'
+  ];
+  const BUILD_NAV_ITEMS = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'wiring', label: 'Wiring' },
+    { key: 'parts', label: 'Parts' },
+    { key: 'code', label: 'Code' },
+    { key: 'steps', label: 'Steps' }
+  ];
+  const PART_COST_RULES = [
+    { re: /\b(arduino uno|uno r3)\b/, low: 12, high: 28 },
+    { re: /\b(arduino nano|nano every)\b/, low: 8, high: 20 },
+    { re: /\b(esp32)\b/, low: 8, high: 16 },
+    { re: /\b(esp8266|nodemcu|wemos d1 mini)\b/, low: 5, high: 12 },
+    { re: /\b(raspberry pi pico|pico w)\b/, low: 5, high: 12 },
+    { re: /\b(breadboard)\b/, low: 4, high: 9 },
+    { re: /\b(jumper|dupont)\b/, low: 3, high: 7 },
+    { re: /\b(ws2812|neopixel|led strip|rgb strip)\b/, low: 10, high: 24 },
+    { re: /\b(led|rgb led)\b/, low: 0.15, high: 0.6 },
+    { re: /\b(resistor)\b/, low: 0.08, high: 0.3 },
+    { re: /\b(button|pushbutton|tactile switch)\b/, low: 0.2, high: 1 },
+    { re: /\b(buzzer|piezo)\b/, low: 1, high: 4 },
+    { re: /\b(servo)\b/, low: 4, high: 14 },
+    { re: /\b(stepper motor)\b/, low: 9, high: 22 },
+    { re: /\b(dc motor|gear motor)\b/, low: 3, high: 10 },
+    { re: /\b(motor driver|l298n|drv8833|a4988)\b/, low: 4, high: 12 },
+    { re: /\b(relay)\b/, low: 3, high: 8 },
+    { re: /\b(ultrasonic|hc-sr04)\b/, low: 2, high: 5 },
+    { re: /\b(pir|motion sensor)\b/, low: 3, high: 8 },
+    { re: /\b(dht11|dht22|bme280|bmp280|temperature sensor|humidity sensor)\b/, low: 2, high: 10 },
+    { re: /\b(soil moisture)\b/, low: 2, high: 6 },
+    { re: /\b(lcd|1602|20x4)\b/, low: 6, high: 14 },
+    { re: /\b(oled|ssd1306|display)\b/, low: 5, high: 14 },
+    { re: /\b(potentiometer|pot)\b/, low: 0.5, high: 2 },
+    { re: /\b(transistor|mosfet)\b/, low: 0.2, high: 3 },
+    { re: /\b(diode)\b/, low: 0.08, high: 0.5 },
+    { re: /\b(capacitor)\b/, low: 0.1, high: 1 },
+    { re: /\b(sensor)\b/, low: 3, high: 10 },
+    { re: /\b(module)\b/, low: 4, high: 12 },
+    { re: /\b(battery|18650|9v|lipo)\b/, low: 5, high: 18 },
+    { re: /\b(power supply|adapter|usb cable|barrel jack)\b/, low: 4, high: 15 },
+    { re: /\b(switch)\b/, low: 0.5, high: 3 },
+    { re: /\b(enclosure|case|project box)\b/, low: 6, high: 18 }
+  ];
 
   function classifyAction(text) {
     const t = text.toLowerCase();
@@ -32,6 +99,27 @@
   /* ── Helper ── */
   const gid = id => document.getElementById(id);
 
+  /* ── Auth ── */
+  let csrfToken = '';
+  function getCsrfHeaders() { return csrfToken ? { 'X-CSRF-Token': csrfToken } : {}; }
+
+  /* ── Profile state ── */
+  let profileName = '', profileBio = '', profileAvatar = '';
+  let profileEmail = '', profileSaving = false, profileError = '', profileOk = '';
+  let pwCurrent = '', pwNew = '', pwConfirm = '', pwError = '', pwOk = '', pwSaving = false;
+  let emailNew = '', emailPw = '', emailError = '', emailOk = '', emailSaving = false;
+  let notifEmailBuild = false, notifEmailDigest = false;
+  let privPublic = false;
+
+  /* ── Cloud sync state ── */
+  let syncStatus = 'idle'; // idle | syncing | synced | error
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    sessionStorage.removeItem('csrfToken');
+    goto('/auth');
+  }
+
   /* ── DOM refs (set in onMount) ── */
   let hero, heroInput, heroGo, chatInput, sendBtn, charCount,
       statusDot, statusText, statusSkill, outputContext,
@@ -42,6 +130,36 @@
       histPanel, histList, histClose,
       chatPane, chatToggle, workspace;
 
+  /* ── Cloud project ideas ── */
+  const PROJECT_IDEAS = [
+    'smart plant watering system',
+    'bluetooth LED mood lamp',
+    'RFID door lock',
+    'weather station with e-ink display',
+    'gesture-controlled robot arm',
+    'solar-powered IoT sensor',
+    'retro LED matrix clock',
+    'voice-activated light switch',
+    'DIY oscilloscope',
+    'automated pet feeder',
+    'capacitive touch piano',
+    'GPS tracker with SMS alerts',
+    'self-balancing robot',
+    'ultrasonic parking sensor',
+    'wireless temperature monitor',
+    'MIDI controller with arcade buttons',
+    'laser harp',
+    'wearable step counter',
+    'soil moisture dashboard',
+    'programmable RGB LED cube',
+  ];
+  let cloudProps = [];
+  function rotateCloudIdea(i) {
+    const next = PROJECT_IDEAS.filter(p => p !== cloudProps[i].idea)[Math.floor(Math.random() * (PROJECT_IDEAS.length - 1))];
+    cloudProps[i] = { ...cloudProps[i], idea: next };
+    cloudProps = cloudProps;
+  }
+
   /* ── State ── */
   let controller = null, generating = false, lastPrompt = '', lastGuide = '',
       lastSkill = '', lastTs = null, lastPartsForAmazon = [];
@@ -50,21 +168,18 @@
   let _del = { cb: null, guide: null, prompt: null };
   let _settingsTrigger = null;
   let _wiregenInstances = [];
-  
-  /* ── Auth state ── */
-  let showLoginModal = false;
-  let showRegisterModal = false;
-  let authError = '';
-  let authLoading = false;
-  let loginEmail = '';
-  let loginPassword = '';
-  let registerEmail = '';
-  let registerUsername = '';
-  let registerPassword = '';
-  let registerConfirmPassword = '';
+  let _instructionBookInstances = [];
+  let loadingStepIndex = -1, loadingProgress = 0, loadingStartTs = 0;
+  let loadingStepTimers = [];
+  let loadingProgressFrame = null;
+  let loadingHideTimer = null;
+  let loadingNoteTimer = null;
+  let loadingChatMsg = null;
+  let buildNavCleanup = () => {};
 
   /* ── Clarify state ── */
   let clarifyQuestions = [], clarifyAnswers = {}, clarifyIdx = 0, clarifyOriginalPrompt = '';
+  let clarifyStage = 'question';
 
   const SKILLS = { 1: 'MONKEY', 2: 'NOVICE', 3: 'BUILDER', 4: 'HACKER', 5: 'EXPERT' };
   const INIT_MSG = '<div class="msg bot"><div class="msg-who">MERTLE.BOT</div><div class="msg-body">Ready. Describe any hardware project to get started.</div></div>';
@@ -73,13 +188,302 @@
   function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function scrollChat() { if (chatLog) chatLog.scrollTop = chatLog.scrollHeight; }
   function scrollOut() { if (outputScroll) outputScroll.scrollTop = outputScroll.scrollHeight; }
+  function normalizeSkillLabel(skill) { return `${skill || 'MONKEY'} MODE`; }
+  function getRenderedSkill() { return lastSkill || getSkill(); }
+  function hashString(str = '') {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+    return Math.abs(hash).toString(36);
+  }
+  function updateHeroBuildState() {
+    if (!heroInput || !heroGo) return;
+    const valid = heroInput.value.trim().length >= 10;
+    heroGo.disabled = !valid;
+    const hint = gid('heroPromptHint');
+    if (hint) hint.textContent = valid ? 'Ready to generate a full build guide.' : 'Describe your project in at least 10 characters.';
+  }
+  function updateSkillHelper(skill) {
+    const message = SKILL_HELP[skill] || SKILL_HELP.MONKEY;
+    const heroHelp = gid('heroSkillHelp');
+    const modalHelp = gid('skillHelpModal');
+    if (heroHelp) heroHelp.textContent = message;
+    if (modalHelp) modalHelp.textContent = message;
+  }
+  function applyExamplePrompt(prompt) {
+    if (!heroInput) return;
+    heroInput.value = prompt;
+    updateHeroBuildState();
+    heroInput.focus();
+  }
+  function slugifySection(section) {
+    const s = (section || '').toLowerCase();
+    if (s.includes('wiring')) return 'wiring';
+    if (s.includes('part')) return 'parts';
+    if (s.includes('code') || s.includes('firmware') || s.includes('sketch')) return 'code';
+    if (s.includes('step') || s.includes('build') || s.includes('assembly') || s.includes('instructions')) return 'steps';
+    return 'overview';
+  }
+  function inferPreviewType(title, guide) {
+    const text = `${title}\n${guide}`.toLowerCase();
+    if (/\b(servo|lock|door|arm|sweep)\b/.test(text)) return 'servo';
+    if (/\b(display|lcd|oled|weather|counter|count|screen)\b/.test(text)) return 'display';
+    if (/\b(wifi|wireless|station|mqtt|radio|signal)\b/.test(text)) return 'signal';
+    if (/\b(sensor|motion|moisture|ultrasonic|temperature|humidity)\b/.test(text)) return 'sensor';
+    if (/\b(light|led|rgb|strip|blink|sound-reactive|lamp)\b/.test(text)) return 'led';
+    return 'pulse';
+  }
+  function renderProjectPreview(title, guide) {
+    const type = inferPreviewType(title, guide);
+    const label = {
+      led: 'Animated LED response preview',
+      servo: 'Animated servo sweep preview',
+      display: 'Animated display preview',
+      signal: 'Animated wireless activity preview',
+      sensor: 'Animated sensing preview',
+      pulse: 'Animated project behavior preview'
+    }[type];
+    return `
+      <div class="preview-card">
+        <div class="section-header">Project Preview</div>
+        <div class="preview-stage preview-${type}" aria-label="${esc(label)}">
+          <div class="preview-caption">Expected behavior</div>
+          <div class="preview-scene">
+            <div class="preview-core"></div>
+            <div class="preview-leds"><span></span><span></span><span></span><span></span></div>
+            <div class="preview-servo-base"></div>
+            <div class="preview-servo-arm"></div>
+            <div class="preview-display-screen">
+              <span class="preview-display-line"></span>
+              <span class="preview-display-line"></span>
+              <span class="preview-display-line"></span>
+            </div>
+            <div class="preview-signal">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="preview-rings">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+          <div class="preview-description">${esc(label)}</div>
+        </div>
+      </div>
+    `;
+  }
+  function renderBuildNav() {
+    return `
+      <nav class="build-nav" aria-label="Build sections">
+        ${BUILD_NAV_ITEMS.map(item => `
+          <button type="button" class="build-nav-tab" data-nav-target="${item.key}">
+            ${item.label}
+          </button>
+        `).join('')}
+      </nav>
+    `;
+  }
+  function renderDiagramFallback(message = '') {
+    return `
+      <div class="diagram-fallback">
+        <div class="diagram-fallback-visual" aria-hidden="true">
+          <div class="diagram-board"></div>
+          <div class="diagram-wire diagram-wire-a"></div>
+          <div class="diagram-wire diagram-wire-b"></div>
+          <div class="diagram-node diagram-node-a"></div>
+          <div class="diagram-node diagram-node-b"></div>
+        </div>
+        <div class="diagram-fallback-title">Diagram coming soon for this module</div>
+        <div class="diagram-fallback-copy">${message ? esc(message) + ' ' : ''}Ask me to describe the wiring in text instead.</div>
+      </div>
+    `;
+  }
+  function getCurrentProjectTitle() {
+    return buildOutput?.querySelector('.project-name')?.textContent?.trim() || 'mertle-project';
+  }
+  function extractQuantity(part = '') {
+    const match = part.trim().match(/^(\d+)\s*(x|×)\b/i) || part.trim().match(/^(\d+)\s+(pcs?|pieces?)\b/i);
+    return match ? Math.max(1, Number(match[1]) || 1) : 1;
+  }
+  function estimatePartCost(parts = []) {
+    let low = 0;
+    let high = 0;
+    let matched = 0;
+    parts.forEach((part) => {
+      const qty = Math.min(extractQuantity(part), 8);
+      const normalized = part.toLowerCase();
+      const rule = PART_COST_RULES.find(({ re }) => re.test(normalized));
+      if (rule) {
+        low += rule.low * qty;
+        high += rule.high * qty;
+        matched += 1;
+      } else {
+        low += 2 * qty;
+        high += 8 * qty;
+      }
+    });
+    if (!parts.length) return null;
+    if (!matched) {
+      low = Math.max(low, 12);
+      high = Math.max(high, 24);
+    }
+    return {
+      low: Math.round(low),
+      high: Math.max(Math.round(high), Math.round(low) + 4)
+    };
+  }
+  function estimateBuildTime(parts = [], steps = [], raw = '', title = '') {
+    const stepCount = steps.length;
+    const partCount = parts.length;
+    const text = `${title}\n${raw}`.toLowerCase();
+    let low = 20 + (stepCount * 4) + (partCount * 3);
+    let high = 35 + (stepCount * 7) + (partCount * 5);
+    if (/\b(solder|heat.?shrink|perfboard)\b/.test(text)) { low += 25; high += 50; }
+    if (/\b(enclosure|mount|drill|cut|glue|3d print)\b/.test(text)) { low += 15; high += 35; }
+    if (/\b(calibrate|tune|debug|trim|adjust|test)\b/.test(text)) { low += 10; high += 20; }
+    if (/\b(servo|motor|relay|display|wifi|wireless|weather station|lock)\b/.test(text)) { low += 10; high += 25; }
+    return { low, high: Math.max(high, low + 15) };
+  }
+  function formatCurrencyRange(range) {
+    if (!range) return 'TBD';
+    if (range.high - range.low <= 3) return `$${range.low}`;
+    return `$${range.low}-$${range.high}`;
+  }
+  function formatDuration(minutes) {
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    const rem = minutes % 60;
+    return rem < 10 ? `${hours} hr` : `${hours} hr ${rem} min`;
+  }
+  function formatDurationRange(range) {
+    if (!range) return 'TBD';
+    return `${formatDuration(range.low)}-${formatDuration(range.high)}`;
+  }
+  function renderBuildEstimates(parts = [], steps = [], raw = '', title = '', skill = getRenderedSkill()) {
+    const cost = estimatePartCost(parts);
+    const time = estimateBuildTime(parts, steps, raw, title);
+    return `
+      <div class="build-meta">
+        <div class="build-meta-group">
+          <span class="build-meta-label">Build mode</span>
+          <span class="build-meta-pill" data-meta="skill">${esc(normalizeSkillLabel(skill))}</span>
+        </div>
+        <div class="build-meta-group">
+          <span class="build-meta-label">Est. parts cost</span>
+          <span class="build-meta-pill" data-meta="cost">${esc(formatCurrencyRange(cost))}</span>
+        </div>
+        <div class="build-meta-group">
+          <span class="build-meta-label">Est. build time</span>
+          <span class="build-meta-pill" data-meta="time">${esc(formatDurationRange(time))}</span>
+        </div>
+      </div>
+    `;
+  }
+  function extractPartsFromGuide(raw = '') {
+    const lines = raw.split('\n');
+    let inParts = false;
+    const parts = [];
+    for (const line of lines) {
+      if (/^##\s+/i.test(line)) {
+        inParts = /^##\s+parts\b/i.test(line.trim());
+        continue;
+      }
+      if (!inParts) continue;
+      if (/^[-*]\s+/.test(line)) parts.push(line.replace(/^[-*]\s+/, '').trim());
+      else if (/^#/.test(line)) inParts = false;
+    }
+    return parts;
+  }
+  function getBuildMarkdown() {
+    if (!buildOutput) return '';
+    const title = getCurrentProjectTitle();
+    const overviewSection = buildOutput.querySelector('[data-build-section="overview"]');
+    const description = [...(overviewSection?.querySelectorAll('p') || [])]
+      .map((p) => p.textContent.trim())
+      .filter(Boolean)
+      .join('\n\n');
+    const parts = [...buildOutput.querySelectorAll('[data-build-section="parts"] .parts-list li')]
+      .map((li) => (li.querySelector('.part-name')?.textContent || li.textContent).trim())
+      .filter(Boolean);
+    const codes = [...buildOutput.querySelectorAll('.code-wrap')].map((wrap) => ({
+      name: wrap.querySelector('.file-name')?.textContent?.trim() || 'code.txt',
+      content: wrap.querySelector('.wiring-block')?.textContent?.trim() || ''
+    })).filter((entry) => entry.content);
+    const steps = [...buildOutput.querySelectorAll('.instruction-book-mount')].flatMap((mount) => {
+      try { return JSON.parse(mount.dataset.steps || '[]'); } catch { return []; }
+    });
+    const lines = [`# ${title}`, '', `Skill Level: ${normalizeSkillLabel(getRenderedSkill())}`, ''];
+    const costText = buildOutput.querySelector('.build-meta-pill[data-meta="cost"]')?.textContent?.trim();
+    const timeText = buildOutput.querySelector('.build-meta-pill[data-meta="time"]')?.textContent?.trim();
+    if (costText) lines.push(`Estimated Parts Cost: ${costText}`);
+    if (timeText) lines.push(`Estimated Build Time: ${timeText}`);
+    if (costText || timeText) lines.push('');
+    if (description) lines.push('## Description', '', description, '');
+    if (parts.length) lines.push('## Parts', '', ...parts.map((part) => `- ${part}`), '');
+    if (codes.length) {
+      lines.push('## Code', '');
+      codes.forEach(({ name, content }) => {
+        lines.push(`### ${name}`, '', '```cpp', content, '```', '');
+      });
+    }
+    if (steps.length) lines.push('## Steps', '', ...steps.map((step) => `${step.num}. ${step.text}`), '');
+    return lines.join('\n').trim() + '\n';
+  }
+  function exportPdf() {
+    const guide = lastGuide;
+    if (!guide) return;
+    const title = getCurrentProjectTitle() || 'Mertle Project';
+    const escaped = guide
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const printHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>${title}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Courier New', Courier, monospace; font-size: 11pt; color: #111; background: #fff; padding: 20mm 18mm; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 18pt; margin-bottom: 6pt; border-bottom: 2px solid #111; padding-bottom: 4pt; }
+  h2 { font-size: 13pt; margin: 14pt 0 5pt; border-bottom: 1px solid #ccc; padding-bottom: 2pt; text-transform: uppercase; letter-spacing: 1px; }
+  pre { background: #f4f4f4; border: 1px solid #ccc; padding: 10pt; font-size: 9.5pt; white-space: pre-wrap; word-break: break-all; margin: 6pt 0; }
+  li { margin: 3pt 0 3pt 18pt; }
+  p { margin: 4pt 0; line-height: 1.5; }
+  @media print { body { padding: 12mm 12mm; } @page { margin: 10mm; } }
+</style>
+</head>
+<body>
+<pre>${escaped}</pre>
+<script>window.onload = () => { window.print(); }<\/script>
+</body>
+</html>`;
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.write(printHtml);
+    win.document.close();
+  }
+  function downloadMarkdownGuide() {
+    const markdown = getBuildMarkdown();
+    if (!markdown) return;
+    const slug = getCurrentProjectTitle().replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'mertle-project';
+    downloadBlob(markdown, `${slug}.md`, 'text/markdown');
+  }
+  async function copyAllCodeBlocks() {
+    const blocks = [...buildOutput.querySelectorAll('.code-wrap')].map((wrap) => {
+      const name = wrap.querySelector('.file-name')?.textContent?.trim() || 'code.txt';
+      const content = wrap.querySelector('.wiring-block')?.textContent?.trim() || '';
+      return content ? `// ${name}\n${content}` : '';
+    }).filter(Boolean);
+    if (!blocks.length) return;
+    await navigator.clipboard.writeText(blocks.join('\n\n'));
+  }
 
   /* ── Session ── */
   function newSession() {
     if (generating && controller) { controller.abort(); controller = null; setGenerating(false); }
     gid('clarifyBg') && gid('clarifyBg').classList.remove('open');
     clarifyQuestions = []; clarifyAnswers = {}; clarifyOriginalPrompt = '';
+    clarifyStage = 'question';
+    buildNavCleanup();
+    buildNavCleanup = () => {};
     destroyWiregenInstances();
+    destroyInstructionBookInstances();
     buildOutput.classList.remove('active'); buildOutput.innerHTML = '';
     emptyState.classList.remove('hidden'); outputContext.textContent = '';
     lastPrompt = ''; lastGuide = ''; lastSkill = ''; lastTs = null;
@@ -98,9 +502,11 @@
   function saveHist(h) { localStorage.setItem('mrt-history', JSON.stringify(h.slice(0, 20))); }
   function addHist(prompt, skill, guide) {
     const ts = Date.now();
+    const cloudId = crypto.randomUUID();
     const h = getHist();
-    h.unshift({ prompt, skill, guide: guide || '', chat: chatLog.innerHTML, ts });
+    h.unshift({ prompt, skill, guide: guide || '', chat: chatLog.innerHTML, ts, cloudId });
     commitHistory(h);
+    syncProjectToCloud({ cloudId, prompt, skill, guide: guide || '', ts });
     return ts;
   }
   function updateHistChat() {
@@ -126,23 +532,29 @@
   }
   function restoreProject(item) {
     if (!item.guide) return false;
+    const guide = repairGuide(item.guide);
+    const support = summarizeSupport(guide);
     lastPrompt = item.prompt; lastGuide = item.guide; lastSkill = item.skill; lastTs = item.ts;
     chatLog.innerHTML = item.chat || INIT_MSG;
     emptyState.classList.add('hidden');
     destroyWiregenInstances();
+    destroyInstructionBookInstances();
     buildOutput.classList.add('active'); buildOutput.classList.remove('streaming-cursor');
-    buildOutput.innerHTML = renderMd(item.guide);
+    buildOutput.innerHTML = renderMd(guide);
     mountWiregenDiagrams();
+    mountInstructionBooks();
+    setupBuildNavigation();
     workspace.classList.remove('no-build');
     requestAnimationFrame(() => {
       const op = workspace.querySelector('.output');
       op.classList.add('output-entering');
       op.addEventListener('animationend', () => op.classList.remove('output-entering'), { once: true });
     });
-    outputContext.textContent = '';
+    outputContext.textContent = normalizeSkillLabel(lastSkill || item.skill || getSkill());
     chatInput.value = ''; charCount.textContent = '0/300';
     gid('btnDelete').style.display = '';
-    addSimBtn(); scrollOut();
+    addSimActions(support);
+    scrollOut();
     return true;
   }
 
@@ -156,6 +568,188 @@
   function downloadGuide(guide, prompt) {
     const name = getProjectName({ guide, prompt });
     downloadBlob(guide, (name.slice(0, 40).replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'project') + '.md', 'text/markdown');
+  }
+
+  /* ── Folder / zip download ── */
+  function parseStepsFromGuide(guide) {
+    return extractStepGroups(guide).map((step) => ({
+      ...step,
+      action: classifyAction(step.text),
+    }));
+  }
+
+  async function captureWiregenSvg(diagram) {
+    const container = document.createElement('div');
+    container.style.cssText = 'position:fixed;left:-9999px;top:0;width:960px;height:640px;visibility:hidden;';
+    document.body.appendChild(container);
+    let inst;
+    try {
+      inst = mount(WiringCanvas, { target: container, props: { diagram, compact: false } });
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const svgEl = container.querySelector('.wiregen-diagram');
+      if (!svgEl) return null;
+      const clone = svgEl.cloneNode(true);
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      clone.removeAttribute('style');
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('width', '960'); bg.setAttribute('height', '640'); bg.setAttribute('fill', '#1A2529');
+      clone.insertBefore(bg, clone.firstChild);
+      return '<?xml version="1.0" encoding="utf-8"?>' + new XMLSerializer().serializeToString(clone);
+    } catch (e) {
+      console.error('wiregen SVG capture failed', e); return null;
+    } finally {
+      if (inst) try { unmount(inst); } catch {}
+      document.body.removeChild(container);
+    }
+  }
+
+  function wrapTextLines(ctx, text, maxW) {
+    const words = text.split(' ');
+    const lines = []; let line = '';
+    for (const word of words) {
+      const test = line ? line + ' ' + word : word;
+      if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = word; } else line = test;
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  function buildProjectHtml(name, guide, diagramCount, steps) {
+    const safeName = esc(name);
+    const safeGuide = esc(guide);
+    const diagramHtml = diagramCount
+      ? Array.from({ length: diagramCount }, (_, i) => {
+          const suffix = diagramCount > 1 ? '-' + (i + 1) : '';
+          return `<figure><img src="images/wiring-diagram${suffix}.svg" alt="Wiring diagram ${i + 1}"><figcaption>Wiring diagram ${i + 1}</figcaption></figure>`;
+        }).join('')
+      : '<p>No wiring diagram is included for this project.</p>';
+    const stepHtml = steps.length
+      ? steps.map((step, i) => `<figure><img src="steps/step-${String(i + 1).padStart(2, '0')}.png" alt="Step ${step.num}"><figcaption>Step ${step.num}: ${esc(step.text)}</figcaption></figure>`).join('')
+      : '<p>No step cards were generated.</p>';
+
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${safeName}</title>
+  <style>
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; background: #0f171a; color: #e7ecef; }
+    main { max-width: 960px; margin: 0 auto; padding: 32px 20px 48px; }
+    h1, h2 { margin: 0 0 16px; }
+    section { margin-top: 32px; }
+    pre { white-space: pre-wrap; background: #162227; padding: 16px; border: 1px solid #29424a; border-radius: 8px; overflow: auto; }
+    figure { margin: 0 0 20px; }
+    img { max-width: 100%; height: auto; display: block; background: #fff; border-radius: 8px; }
+    figcaption { margin-top: 8px; color: #9fb2bb; font-size: 14px; }
+    a { color: #8ad3ff; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${safeName}</h1>
+    <p><a href="guide.md">Open raw guide.md</a></p>
+    <section>
+      <h2>Guide</h2>
+      <pre>${safeGuide}</pre>
+    </section>
+    <section>
+      <h2>Wiring Diagrams</h2>
+      ${diagramHtml}
+    </section>
+    <section>
+      <h2>Step Cards</h2>
+      ${stepHtml}
+    </section>
+  </main>
+</body>
+</html>`;
+  }
+
+  const STEP_EXPORT_COLORS = {
+    wire:     { accent: '#29B6F6', dark: '#0277BD', label: 'WIRE' },
+    code:     { accent: '#4CAF50', dark: '#388E3C', label: 'CODE' },
+    power:    { accent: '#FFD54F', dark: '#F9A825', label: 'POWER' },
+    test:     { accent: '#00BCD4', dark: '#007C91', label: 'TEST' },
+    assemble: { accent: '#FF7043', dark: '#BF360C', label: 'BUILD' },
+    default:  { accent: '#90A4AE', dark: '#546E7A', label: 'STEP' },
+  };
+
+  function renderStepImage(step, current, total) {
+    const W = 800, H = 280;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    const col = STEP_EXPORT_COLORS[step.action] || STEP_EXPORT_COLORS.default;
+    // Background
+    ctx.fillStyle = '#FAFAFA'; ctx.fillRect(0, 0, W, H);
+    // Top strip
+    ctx.fillStyle = col.accent; ctx.fillRect(0, 0, W, 10);
+    // Left border
+    ctx.fillStyle = col.accent; ctx.fillRect(0, 0, 3, H);
+    // Step badge
+    ctx.fillStyle = col.accent; ctx.fillRect(0, 0, 58, 58);
+    ctx.fillStyle = col.dark; ctx.fillRect(4, 54, 58, 4);
+    ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 18px monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(step.num, 29, 30);
+    // Counter
+    ctx.fillStyle = '#888888'; ctx.font = '10px monospace';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+    ctx.fillText(current + ' / ' + total, W - 14, 16);
+    // Action badge
+    ctx.font = 'bold 10px monospace';
+    const bw = ctx.measureText(col.label).width + 24;
+    ctx.fillStyle = col.accent; ctx.fillRect(W / 2 - bw / 2, 72, bw, 22);
+    ctx.fillStyle = col.dark; ctx.fillRect(W / 2 - bw / 2 + 2, 92, bw, 3);
+    ctx.fillStyle = '#1a1a1a'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(col.label, W / 2, 83);
+    // Step text
+    ctx.fillStyle = '#1a1a1a'; ctx.font = '14px monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    wrapTextLines(ctx, stripMarkdown(step.text), W - 100).forEach((ln, i) => ctx.fillText(ln, W / 2, 110 + i * 22));
+    return new Promise(res => canvas.toBlob(b => res(b), 'image/png'));
+  }
+
+  async function downloadProjectFolder(guide, prompt) {
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+    const support = summarizeSupport(guide);
+    const name = getProjectName({ guide, prompt });
+    const slug = name.slice(0, 40).replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'project';
+    zip.file('guide.md', guide);
+    // Extract wiregen diagrams from markdown
+    const wiregenRegex = /```wiregen\r?\n([\s\S]*?)```/g;
+    let wm; const diagrams = [];
+    while ((wm = wiregenRegex.exec(guide)) !== null) {
+      try { diagrams.push(JSON.parse(wm[1].trim())); } catch {}
+    }
+    const imgFolder = zip.folder('images');
+    for (let i = 0; i < diagrams.length; i++) {
+      const svgStr = await captureWiregenSvg(diagrams[i]);
+      if (svgStr) {
+        const sfx = diagrams.length > 1 ? '-' + (i + 1) : '';
+        imgFolder.file('wiring-diagram' + sfx + '.svg', svgStr);
+      }
+    }
+    // Generate step images
+    const steps = parseStepsFromGuide(guide);
+    if (steps.length) {
+      const stepsFolder = zip.folder('steps');
+      for (let i = 0; i < steps.length; i++) {
+        const blob = await renderStepImage(steps[i], i + 1, steps.length);
+        if (blob) stepsFolder.file('step-' + String(i + 1).padStart(2, '0') + '.png', blob);
+      }
+    }
+    zip.file('support.json', JSON.stringify({
+      supportedDiagram: support.supportedDiagram,
+      safeTextOnly: support.safeTextOnly,
+      canSimulate: support.canSimulate,
+      issues: support.issues,
+    }, null, 2));
+    zip.file('index.html', buildProjectHtml(name, guide, diagrams.length, steps));
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(zipBlob, slug + '.zip', 'application/zip');
   }
 
   function showDeleteConfirm(prompt, guide, onDelete, noDownload) {
@@ -229,7 +823,7 @@
       el.tabIndex = 0; el.setAttribute('role', 'button'); el.dataset.ts = item.ts;
       if (selectedTs.has(item.ts)) el.classList.add('selected');
       const d = new Date(item.ts), ts = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><div class="hist-item-body"><div class="hist-item-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</div><div class="hist-item-meta">${esc(item.skill)} &middot; ${esc(ts)}</div></div><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
+      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><div class="hist-item-body"><div class="hist-item-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</div><div class="hist-item-meta">${esc(item.skill)} &middot; ${esc(ts)}</div></div><button class="item-dl" title="Download" aria-label="Download project" tabindex="-1">${ICON_DOWNLOAD}</button><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
       const go = () => {
         if (selectedTs.size > 0) { toggleSelect(item.ts); return; }
         histPanel.classList.remove('open');
@@ -238,6 +832,7 @@
       el.addEventListener('click', go);
       el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
       el.querySelector('.item-cb').addEventListener('click', e => { e.stopPropagation(); toggleSelect(item.ts); });
+      el.querySelector('.item-dl').addEventListener('click', e => { e.stopPropagation(); if (item.guide) downloadProjectFolder(item.guide, item.prompt); });
       el.querySelector('.item-del').addEventListener('click', e => {
         e.stopPropagation();
         showDeleteConfirm(getProjectName(item), item.guide, () => deleteFromHist(item.ts, el));
@@ -261,7 +856,7 @@
       el.tabIndex = 0; el.setAttribute('role', 'button'); el.dataset.ts = item.ts;
       if (selectedTs.has(item.ts)) el.classList.add('selected');
       const ago = timeAgo(item.ts);
-      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><span class="hero-recent-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</span><span class="hero-recent-meta">${esc(ago)}</span><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
+      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><span class="hero-recent-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</span><span class="hero-recent-meta">${esc(ago)}</span><button class="item-dl" title="Download" aria-label="Download project" tabindex="-1">${ICON_DOWNLOAD}</button><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
       const go = () => {
         if (selectedTs.size > 0) { toggleSelect(item.ts); return; }
         if (restoreProject(item)) { dismissHero(); } else { heroInput.value = item.prompt; send(item.prompt, null); }
@@ -269,6 +864,7 @@
       el.addEventListener('click', go);
       el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
       el.querySelector('.item-cb').addEventListener('click', e => { e.stopPropagation(); toggleSelect(item.ts); });
+      el.querySelector('.item-dl').addEventListener('click', e => { e.stopPropagation(); if (item.guide) downloadProjectFolder(item.guide, item.prompt); });
       el.querySelector('.item-del').addEventListener('click', e => {
         e.stopPropagation();
         showDeleteConfirm(getProjectName(item), item.guide, () => deleteFromHist(item.ts, el));
@@ -300,10 +896,166 @@
     localStorage.setItem('mrt-skill', n);
     document.querySelectorAll('.hero-skill').forEach(b => b.classList.toggle('active', b.dataset.skill === String(n)));
     skillGrid.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.skill === String(n)));
-    statusSkill.textContent = SKILLS[n] || 'MONKEY';
+    const skill = SKILLS[n] || 'MONKEY';
+    statusSkill.textContent = normalizeSkillLabel(skill);
+    updateSkillHelper(skill);
   }
   function getSkill() { return SKILLS[Number(localStorage.getItem('mrt-skill')) || 1] || 'MONKEY'; }
   function getAge() { return Number(localStorage.getItem('mrt-age')) || 25; }
+
+  /* ── Cloud sync helpers ── */
+  function extractTitle(guide) {
+    const m = (guide || '').match(/^#\s+(.+)$/m);
+    return m ? m[1].trim().slice(0, 100) : '';
+  }
+
+  async function syncProjectToCloud({ cloudId, prompt, skill, guide, ts }) {
+    if (!csrfToken || !cloudId) return;
+    const title = extractTitle(guide) || prompt.slice(0, 60);
+    const chatHtml = chatLog ? chatLog.innerHTML : '';
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+        body: JSON.stringify({ id: cloudId, title, prompt, skill, guide, chat_html: chatHtml, tags: [], client_ts: ts, updated_at: ts }),
+      });
+      if (res.status === 409) {
+        await fetch(`/api/projects/${cloudId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+          body: JSON.stringify({ title, prompt, skill, guide, chat_html: chatHtml }),
+        });
+      }
+    } catch { /* background, silent */ }
+  }
+
+  function mergeCloudProjects(updates, deletedIds) {
+    let h = getHist();
+    const deletedSet = new Set(deletedIds || []);
+    h = h.filter(p => !p.cloudId || !deletedSet.has(p.cloudId));
+    for (const proj of (updates || [])) {
+      const idx = h.findIndex(p => p.cloudId === proj.id);
+      if (idx !== -1) {
+        if ((proj.updated_at || 0) > (h[idx].syncedAt || h[idx].ts || 0)) {
+          h[idx] = { ...h[idx], prompt: proj.prompt || h[idx].prompt, skill: proj.skill || h[idx].skill, guide: proj.guide || h[idx].guide, chat: proj.chat_html || h[idx].chat, syncedAt: proj.updated_at, tags: proj.tags || h[idx].tags };
+        }
+      } else {
+        h.push({ cloudId: proj.id, prompt: proj.prompt || proj.title || '', skill: proj.skill || 'MONKEY', guide: proj.guide || '', chat: proj.chat_html || '', ts: proj.client_ts || proj.created_at, syncedAt: proj.updated_at, tags: proj.tags || [] });
+      }
+    }
+    h.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    localStorage.setItem('mrt-history', JSON.stringify(h.slice(0, 50)));
+    renderHist();
+    renderHeroRecent();
+  }
+
+  function updateSyncDot() {
+    const dot = gid('histSyncDot');
+    if (!dot) return;
+    dot.className = 'hist-sync-dot hist-sync-' + syncStatus;
+    dot.title = { idle: 'Not synced', syncing: 'Syncing…', synced: 'Synced to cloud', error: 'Sync failed' }[syncStatus] || '';
+  }
+
+  async function initSync() {
+    if (!csrfToken) return;
+    const since = Number(localStorage.getItem('mrt-last-sync') || '0');
+    const localItems = getHist().filter(p => p.cloudId).map(p => ({
+      id: p.cloudId, title: extractTitle(p.guide) || p.prompt.slice(0, 60),
+      prompt: p.prompt, skill: p.skill, guide: p.guide, chat_html: p.chat || '',
+      tags: p.tags || [], client_ts: p.ts, updated_at: p.syncedAt || p.ts,
+    }));
+    try {
+      syncStatus = 'syncing'; updateSyncDot();
+      const res = await fetch('/api/projects/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+        body: JSON.stringify({ since, changes: localItems }),
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      mergeCloudProjects(data.updates, data.deleted_ids);
+      localStorage.setItem('mrt-last-sync', String(data.server_time || Date.now()));
+      syncStatus = 'synced';
+    } catch { syncStatus = 'error'; }
+    updateSyncDot();
+  }
+
+  /* ── Profile & account functions ── */
+  async function loadProfile() {
+    if (!csrfToken) return;
+    try {
+      const res = await fetch('/api/user/profile', { headers: getCsrfHeaders() });
+      if (!res.ok) return;
+      const p = await res.json();
+      profileName = p.display_name || '';
+      profileBio = p.bio || '';
+      profileAvatar = p.avatar_url || '';
+      profileEmail = p.email || '';
+      notifEmailBuild = !!(p.notification_prefs?.emailBuildComplete);
+      notifEmailDigest = !!(p.notification_prefs?.emailWeeklyDigest);
+      privPublic = !!(p.privacy_settings?.publicProfile);
+      const el = gid('profileEmailDisplay');
+      if (el) el.textContent = p.email || '';
+    } catch { /* silent */ }
+  }
+
+  async function saveProfile() {
+    profileError = ''; profileOk = ''; profileSaving = true;
+    try {
+      const res = await fetch('/api/user/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+        body: JSON.stringify({
+          display_name: profileName.trim(),
+          avatar_url: profileAvatar.trim() || null,
+          bio: profileBio.trim(),
+          notification_prefs: { emailBuildComplete: notifEmailBuild, emailWeeklyDigest: notifEmailDigest },
+          privacy_settings: { publicProfile: privPublic },
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) { profileError = d.error || 'Save failed'; }
+      else { profileOk = 'Profile saved!'; setTimeout(() => { profileOk = ''; }, 2500); }
+    } catch { profileError = 'Network error'; }
+    finally { profileSaving = false; }
+  }
+
+  async function changePassword() {
+    pwError = ''; pwOk = '';
+    if (!pwCurrent) { pwError = 'Enter your current password'; return; }
+    if (!pwNew || pwNew.length < 8) { pwError = 'New password must be at least 8 characters'; return; }
+    if (pwNew !== pwConfirm) { pwError = 'Passwords do not match'; return; }
+    pwSaving = true;
+    try {
+      const res = await fetch('/api/user/password', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+        body: JSON.stringify({ current_password: pwCurrent, new_password: pwNew }),
+      });
+      const d = await res.json();
+      if (!res.ok) { pwError = d.error || 'Failed'; }
+      else { pwOk = 'Password changed!'; pwCurrent = pwNew = pwConfirm = ''; setTimeout(() => { pwOk = ''; }, 3000); }
+    } catch { pwError = 'Network error'; }
+    finally { pwSaving = false; }
+  }
+
+  async function changeEmail() {
+    emailError = ''; emailOk = '';
+    if (!emailNew || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNew.trim())) { emailError = 'Enter a valid email address'; return; }
+    if (!emailPw) { emailError = 'Enter your current password'; return; }
+    emailSaving = true;
+    try {
+      const res = await fetch('/api/user/email', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+        body: JSON.stringify({ new_email: emailNew.trim(), current_password: emailPw }),
+      });
+      const d = await res.json();
+      if (!res.ok) { emailError = d.error || 'Failed'; }
+      else { emailOk = 'Email updated!'; profileEmail = d.email; const el = gid('profileEmailDisplay'); if (el) el.textContent = d.email; emailNew = emailPw = ''; setTimeout(() => { emailOk = ''; }, 3000); }
+    } catch { emailError = 'Network error'; }
+    finally { emailSaving = false; }
+  }
 
   /* ── Messages ── */
   function addMsg(text, role) {
@@ -320,6 +1072,187 @@
     t.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>';
     w.appendChild(l); w.appendChild(t); chatLog.appendChild(w); scrollChat();
     return w;
+  }
+  function setBotMsgBody(wrapper, html) {
+    const body = wrapper?.querySelector('.msg-body');
+    if (body) body.innerHTML = html;
+    scrollChat();
+  }
+  function renderChatLoadingMirror() {
+    if (!loadingChatMsg) return;
+    const activeLabel = loadingStepIndex >= 0 && loadingStepIndex < BUILD_STATUS_STEPS.length
+      ? BUILD_STATUS_STEPS[loadingStepIndex]
+      : 'Preparing your guide...';
+    const note = loadingProgress > 92
+      ? 'Taking a little longer than usual. Still working through the full guide.'
+      : 'I’ll drop the full wiring, parts, code, and steps here as soon as they’re ready.';
+    setBotMsgBody(loadingChatMsg, `
+      <div class="chat-build-status">
+        <div class="chat-build-label">CURRENT STEP</div>
+        <div class="chat-build-step">${esc(activeLabel)}</div>
+        <div class="chat-build-note">${esc(note)}</div>
+      </div>
+    `);
+  }
+
+  function renderLoadingFeed() {
+    const feed = gid('loadingFeed');
+    if (!feed) return;
+    const activeLabel = loadingStepIndex >= 0 && loadingStepIndex < BUILD_STATUS_STEPS.length
+      ? BUILD_STATUS_STEPS[loadingStepIndex]
+      : 'Preparing your guide...';
+    const note = loadingProgress > 92
+      ? 'Still polishing the response. Long builds usually mean more wiring/code detail is being assembled.'
+      : 'Mertle is turning your prompt into a complete project guide with hardware, firmware, and instructions.';
+    feed.innerHTML = `
+      <div class="loading-feed-card">
+        <div class="loading-feed-title">BUILDING YOUR PROJECT</div>
+        <div class="loading-feed-subtitle">Live generation status</div>
+        <div class="loading-feed-active">${esc(activeLabel)}</div>
+        <div class="loading-feed-note">${esc(note)}</div>
+        <div class="loading-feed-list">
+          ${BUILD_STATUS_STEPS.map((step, idx) => {
+            const state = idx < loadingStepIndex ? 'done' : idx === loadingStepIndex ? 'active' : 'pending';
+            return `
+              <div class="loading-feed-step ${state}">
+                <span class="loading-feed-icon">${idx < loadingStepIndex ? '✓' : idx === loadingStepIndex ? '>' : '·'}</span>
+                <span class="loading-feed-text">${esc(step)}</span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+        <div class="loading-feed-progress">
+          <div class="loading-feed-progress-bar" style="width:${loadingProgress.toFixed(1)}%"></div>
+        </div>
+      </div>
+    `;
+    renderChatLoadingMirror();
+  }
+
+  function clearLoadingFeedTimers() {
+    loadingStepTimers.forEach(id => clearTimeout(id));
+    loadingStepTimers = [];
+    if (loadingProgressFrame) cancelAnimationFrame(loadingProgressFrame);
+    loadingProgressFrame = null;
+    if (loadingHideTimer) clearTimeout(loadingHideTimer);
+    loadingHideTimer = null;
+    if (loadingNoteTimer) clearTimeout(loadingNoteTimer);
+    loadingNoteTimer = null;
+  }
+
+  function tickLoadingProgress() {
+    if (!generating) return;
+    const elapsed = performance.now() - loadingStartTs;
+    loadingProgress = Math.min(90, 90 * (1 - Math.exp(-elapsed / 5000)));
+    renderLoadingFeed();
+    loadingProgressFrame = requestAnimationFrame(tickLoadingProgress);
+  }
+
+  function startLoadingFeed() {
+    const feed = gid('loadingFeed');
+    if (!feed) return;
+    clearLoadingFeedTimers();
+    loadingStepIndex = 0;
+    loadingProgress = 4;
+    loadingStartTs = performance.now();
+    feed.hidden = false;
+    loadingChatMsg = addMsg('Starting your build...', 'bot');
+    renderLoadingFeed();
+    BUILD_STATUS_STEPS.slice(1).forEach((_, offset) => {
+      const timer = setTimeout(() => {
+        if (!generating) return;
+        loadingStepIndex = Math.min(offset + 1, BUILD_STATUS_STEPS.length - 1);
+        renderLoadingFeed();
+      }, 1200 + offset * 1100);
+      loadingStepTimers.push(timer);
+    });
+    loadingNoteTimer = setTimeout(() => {
+      if (!generating) return;
+      loadingProgress = Math.max(loadingProgress, 93);
+      renderLoadingFeed();
+    }, 8500);
+    loadingProgressFrame = requestAnimationFrame(tickLoadingProgress);
+  }
+
+  function finishLoadingFeed() {
+    const feed = gid('loadingFeed');
+    if (!feed) return;
+    clearLoadingFeedTimers();
+    loadingStepIndex = BUILD_STATUS_STEPS.length;
+    loadingProgress = 100;
+    renderLoadingFeed();
+    if (loadingChatMsg) {
+      setBotMsgBody(loadingChatMsg, '<div class="chat-build-status"><div class="chat-build-label">READY</div><div class="chat-build-step">Your guide is here.</div><div class="chat-build-note">Scroll the build pane to review the output.</div></div>');
+      loadingChatMsg = null;
+    }
+    loadingHideTimer = setTimeout(() => {
+      feed.hidden = true;
+    }, 380);
+  }
+
+  function focusProjectEdit() {
+    if (!chatPane || !chatInput) return;
+    chatPane.classList.remove('collapsed');
+    const prompt = "I'd like to change...";
+    chatInput.value = prompt;
+    charCount.textContent = `${prompt.length}/300`;
+    chatInput.focus();
+    chatInput.setSelectionRange(prompt.length, prompt.length);
+  }
+
+  function jumpToBuildSection(key) {
+    const target = buildOutput?.querySelector(`[data-build-section="${key}"]`);
+    if (!target || !outputScroll) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function setupBuildNavigation() {
+    buildNavCleanup();
+    buildNavCleanup = () => {};
+    if (!buildOutput || !outputScroll) return;
+    const nav = buildOutput.querySelector('.build-nav');
+    if (!nav) return;
+    const tabs = [...nav.querySelectorAll('.build-nav-tab')];
+    const sections = tabs.map(tab => ({
+      key: tab.dataset.navTarget,
+      tab,
+      section: buildOutput.querySelector(`[data-build-section="${tab.dataset.navTarget}"]`)
+    }));
+    const setActive = (key) => {
+      tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.navTarget === key));
+    };
+    sections.forEach(({ tab, section }) => {
+      tab.classList.toggle('disabled', !section);
+      const handler = () => {
+        if (!section) return;
+        jumpToBuildSection(tab.dataset.navTarget);
+      };
+      tab.addEventListener('click', handler);
+      tab._navHandler = handler;
+    });
+    const onScroll = () => {
+      const rootTop = outputScroll.getBoundingClientRect().top;
+      let active = 'overview';
+      let best = -Infinity;
+      sections.forEach(({ key, section }) => {
+        if (!section) return;
+        const offset = section.getBoundingClientRect().top - rootTop;
+        if (offset <= 120 && offset > best) {
+          best = offset;
+          active = key;
+        }
+      });
+      setActive(active);
+    };
+    outputScroll.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    buildNavCleanup = () => {
+      outputScroll.removeEventListener('scroll', onScroll);
+      sections.forEach(({ tab }) => {
+        if (tab._navHandler) tab.removeEventListener('click', tab._navHandler);
+        delete tab._navHandler;
+      });
+    };
   }
 
   /* ── Markdown renderer ── */
@@ -386,8 +1319,30 @@
   }
 
   function renderMd(raw) {
-    let html = ''; const lines = raw.split('\n'); let inCode = false, codeLang = '', code = '', inUl = false, inOl = false, sec = '';
+    const estimatedParts = extractPartsFromGuide(raw);
+    const estimatedSteps = parseStepsFromGuide(raw);
+    let html = '';
+    const lines = raw.split('\n');
+    let inCode = false, codeLang = '', code = '', inUl = false, inOl = false, sec = '';
     let partsInSection = [];
+    let stepBuffer = [], title = '';
+    let currentSectionKey = '', sectionOpen = false, sectionHasDiagram = false;
+    lastPartsForAmazon = [];
+    function closeSection() {
+      if (!sectionOpen) return;
+      if (currentSectionKey === 'wiring' && !sectionHasDiagram) html += renderDiagramFallback();
+      html += '</section>';
+      sectionOpen = false;
+      sectionHasDiagram = false;
+    }
+    function openSection(key, label) {
+      closeSection();
+      currentSectionKey = key;
+      sectionOpen = true;
+      sectionHasDiagram = false;
+      html += `<section class="build-section" id="build-section-${key}" data-build-section="${key}">`;
+      if (label) html += '<div class="section-header">' + esc(label) + '</div>';
+    }
     function cl() {
       if (inUl) {
         if (/^PARTS$/i.test(sec) && partsInSection.length) {
@@ -396,7 +1351,18 @@
         } else { html += '</ul>'; }
         inUl = false;
       }
-      if (inOl) { html += '</div>'; inOl = false; }
+      if (inOl) {
+          if (stepBuffer.length) {
+            const stepsJson = JSON.stringify(stepBuffer)
+              .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+            const projectId = hashString((title || 'project') + '|' + raw);
+            html += '<div class="instruction-book-mount" data-project-id="' + projectId + '" data-steps="' + stepsJson + '"></div>';
+            stepBuffer = [];
+          } else {
+            html += '</div>';
+          }
+          inOl = false;
+      }
     }
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -404,6 +1370,7 @@
         if (inCode) {
           if (codeLang === 'wiregen') {
             const jsonStr = code.trim();
+            sectionHasDiagram = true;
             const escaped = jsonStr.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
             html += '<div class="wiregen-mount" data-diagram="' + escaped + '"></div>';
           } else {
@@ -415,46 +1382,67 @@
         continue;
       }
       if (inCode) { code += line + '\n'; continue; }
-      if (line.startsWith('# ')) { cl(); html += '<div class="project-name" contenteditable="true" spellcheck="false" onblur="persistTitle(this)">' + inlineFmt(esc(line.slice(2).trim())) + '</div><div class="project-name-hint">click to rename</div>'; continue; }
-      if (line.startsWith('## ')) { cl(); sec = line.slice(3).trim(); partsInSection = []; html += '<div class="section-header">' + esc(sec) + '</div>'; continue; }
+      if (line.startsWith('# ')) {
+        cl();
+        title = line.slice(2).trim();
+        html += '<div class="build-edit-bar"><button type="button" class="edit-project-btn" onclick="triggerProjectEdit()"><span class="edit-project-icon" aria-hidden="true"></span>EDIT THIS PROJECT</button><div class="build-edit-copy">Jump back to the conversation and ask for a revision.</div></div>';
+        html += '<div class="project-name" contenteditable="true" spellcheck="false" onblur="persistTitle(this)">' + inlineFmt(esc(title)) + '</div><div class="project-name-hint">click to rename</div>';
+        html += renderBuildEstimates(estimatedParts, estimatedSteps, raw, title, getRenderedSkill());
+        html += renderBuildNav();
+        openSection('overview');
+        html += renderProjectPreview(title, raw);
+        continue;
+      }
+      if (line.startsWith('## ')) {
+        cl();
+        sec = line.slice(3).trim();
+        partsInSection = [];
+        openSection(slugifySection(sec), sec);
+        continue;
+      }
       if (/^[-*]\s/.test(line)) {
-        if (inOl) { html += '</div>'; inOl = false; }
+        if (inOl) { continue; }
         if (!inUl) { html += '<ul class="parts-list">'; inUl = true; }
         const partText = line.replace(/^[-*]\s/, '');
         if (/^PARTS$/i.test(sec)) {
           partsInSection.push(partText);
           const q = encodeURIComponent(partText);
-          html += '<li><a href="https://www.amazon.com/s?k=' + q + '" target="_blank" rel="noopener noreferrer" class="part-link">' + inlineFmt(esc(partText)) + '</a></li>';
+          html += '<li><span class="part-name">' + inlineFmt(esc(partText)) + '</span><a href="https://www.amazon.com/s?k=' + q + '" target="_blank" rel="noopener noreferrer" class="part-buy-link">Buy</a></li>';
         } else { html += '<li>' + inlineFmt(esc(partText)) + '</li>'; }
         continue;
       }
       if (/^\d+\.\s/.test(line)) {
         if (inUl) { html += '</ul>'; inUl = false; }
-        if (!inOl) { html += '<div class="step-book">'; inOl = true; }
+        if (!inOl) { inOl = true; }
         const stepNum = line.match(/^(\d+)\./)[1];
         const stepText = line.replace(/^\d+\.\s/, '');
         const action = classifyAction(stepText);
-        html += '<div class="step-card"><div class="step-badge">' + esc(stepNum) + '</div><div class="step-icon">' + STEP_ICONS[action] + '</div><div class="step-body"><div class="step-action">' + STEP_LABELS[action] + '</div><div class="step-text">' + inlineFmt(esc(stepText)) + '</div></div></div>';
+        stepBuffer.push({ num: stepNum, text: stepText, action });
         continue;
       }
       if (!line.trim()) {
         let next = ''; for (let j = i + 1; j < lines.length; j++) { if (lines[j].trim()) { next = lines[j]; break; } }
         if (inOl && /^\d+\.\s/.test(next)) continue;
+        if (inOl && stepBuffer.length > 0) continue;
         if (inUl && /^[-*]\s/.test(next)) continue;
         cl(); continue;
       }
+      if (inOl && stepBuffer.length > 0) continue;
       cl(); html += '<p>' + inlineFmt(esc(line)) + '</p>';
     }
     if (inCode) {
       if (codeLang === 'wiregen') {
         // Streaming: wiregen block not yet closed — show loading placeholder
+        sectionHasDiagram = true;
         html += '<div class="wiregen-loading">Building wiring diagram...</div>';
       } else {
         const e = highlightArduino(code.trimEnd()), id = 'c-' + Math.random().toString(36).slice(2, 8), fn = guessFile(code, sec);
         html += '<div class="code-wrap" id="wrap-' + id + '"><div class="code-file-bar" onclick="toggleCode(\'' + id + '\')"><span class="file-arrow">&#9654;</span><span class="file-name">' + esc(fn) + '</span><div class="code-file-actions"><button class="code-file-btn" onclick="event.stopPropagation();copyCode(\'' + id + '\',this)">COPY</button><button class="code-file-btn" onclick="event.stopPropagation();downloadCode(\'' + id + '\')">DOWNLOAD</button></div></div><div class="wiring-expand"><pre class="wiring-block" id="' + id + '">' + e + '</pre></div></div>';
       }
     }
-    cl(); return html;
+    cl();
+    closeSection();
+    return html;
   }
 
   function shopAllOnAmazon() {
@@ -478,7 +1466,32 @@
         const inst = mount(WiringCanvas, { target: el, props: { diagram } });
         _wiregenInstances.push(inst);
       } catch (err) {
-        el.innerHTML = '<p style="color:var(--hi);font-size:12px;">Diagram error: ' + esc(err.message) + '</p>';
+        el.innerHTML = renderDiagramFallback(err.message || 'Diagram coming soon for this module');
+      }
+    });
+  }
+
+  function destroyInstructionBookInstances() {
+    _instructionBookInstances.forEach(inst => { try { unmount(inst); } catch {} });
+    _instructionBookInstances = [];
+  }
+
+  function mountInstructionBooks() {
+    if (!buildOutput) return;
+    const mounts = buildOutput.querySelectorAll('.instruction-book-mount');
+    mounts.forEach(el => {
+      if (el.dataset.mounted) return;
+      el.dataset.mounted = '1';
+      try {
+        const steps = JSON.parse(
+          el.dataset.steps
+            .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"')
+        );
+        const projectId = el.dataset.projectId || hashString(JSON.stringify(steps));
+        const inst = mount(InstructionBook, { target: el, props: { steps, projectId } });
+        _instructionBookInstances.push(inst);
+      } catch (err) {
+        el.innerHTML = '<p style="color:var(--hi);font-size:12px;">Instruction book error: ' + esc(err.message) + '</p>';
       }
     });
   }
@@ -489,13 +1502,22 @@
     sendBtn.textContent = on ? 'STOP' : 'SEND';
     sendBtn.classList.toggle('stopping', on);
     chatInput.disabled = on;
+    chatPane?.classList.toggle('generating', on);
+    workspace?.classList.toggle('is-generating', on);
+    document.querySelectorAll('.output-head-btn').forEach((btn) => btn.classList.toggle('muted-during-build', on));
     if (on) {
       statusDot.classList.add('active');
       let d = 0; statusText.textContent = 'BUILDING';
       statusInterval = setInterval(() => { d = (d + 1) % 4; statusText.textContent = 'BUILDING' + '.'.repeat(d); }, 350);
+      startLoadingFeed();
     } else {
       statusDot.classList.remove('active');
       clearInterval(statusInterval); statusText.textContent = 'READY';
+      finishLoadingFeed();
+      if (loadingChatMsg) {
+        loadingChatMsg.remove();
+        loadingChatMsg = null;
+      }
       chatInput.focus();
     }
   }
@@ -509,14 +1531,11 @@
 
   function closeClarifyOverlay() {
     gid('clarifyBg').classList.remove('open');
+    clarifyStage = 'question';
   }
 
   function finishClarify() {
-    const q = clarifyQuestions[clarifyIdx];
-    if (q) {
-      const inp = gid('clarifyInner').querySelector('.clarify-text-input');
-      if (inp) clarifyAnswers[q.id] = inp.value.trim();
-    }
+    if (clarifyStage === 'question') saveClarifyAnswer();
     closeClarifyOverlay();
     try { localStorage.setItem('mrt-last-clarify', JSON.stringify(clarifyAnswers)); } catch {}
     const clarifications = formatClarifications(clarifyAnswers);
@@ -530,19 +1549,38 @@
     _doGenerate(clarifyOriginalPrompt, null);
   }
 
+  function saveClarifyAnswer() {
+    const q = clarifyQuestions[clarifyIdx];
+    if (!q) return;
+    const inp = gid('clarifyInner').querySelector('.clarify-text-input');
+    if (inp) clarifyAnswers[q.id] = inp.value.trim();
+  }
+
+  function renderClarifyFrame({ title, subtitle, progressPct, body, footer }) {
+    gid('clarifyInner').innerHTML = `
+      <div class="clarify-progress-meta">
+        <div class="clarify-progress-label">${esc(title)}</div>
+        <div class="clarify-progress-subtitle">${esc(subtitle)}</div>
+      </div>
+      <div class="clarify-progress-bar"><span style="width:${progressPct}%"></span></div>
+      ${body}
+      <div class="clarify-nav">${footer}</div>
+    `;
+  }
+
   function advanceClarify() {
     const q = clarifyQuestions[clarifyIdx];
     if (!q) { finishClarify(); return; }
-    const inp = gid('clarifyInner').querySelector('.clarify-text-input');
-    if (inp) clarifyAnswers[q.id] = inp.value.trim();
+    saveClarifyAnswer();
     if (clarifyIdx < clarifyQuestions.length - 1) {
       renderClarifyQuestion(clarifyIdx + 1);
     } else {
-      finishClarify();
+      renderClarifySummary();
     }
   }
 
   function renderClarifyQuestion(idx) {
+    clarifyStage = 'question';
     clarifyIdx = idx;
     const q = clarifyQuestions[idx];
     if (!q) return;
@@ -565,15 +1603,20 @@
     const inputHtml = `${chipHtml}<input class="clarify-text-input" type="text" placeholder="${esc(q.hint || 'or type your own...')}" value="${esc(preselect)}" maxlength="200" autocomplete="off" spellcheck="false"/>`;
 
     const isLast = idx === total - 1;
-    gid('clarifyInner').innerHTML = `
-      <div class="clarify-progress">${dots}</div>
-      <div class="clarify-question">${esc(q.question)}</div>
-      ${inputHtml}
-      <div class="clarify-nav">
-        ${idx > 0 ? `<button type="button" class="clarify-back" id="clarifyBack">&lt; BACK</button>` : `<span></span>`}
-        <button type="button" class="clarify-next" id="clarifyNext">${isLast ? 'BUILD &gt;&gt;' : 'NEXT &gt;'}</button>
-      </div>
-    `;
+    renderClarifyFrame({
+      title: `Question ${idx + 1} of ${total}`,
+      subtitle: 'A couple quick choices help tailor the build guide.',
+      progressPct: ((idx + 1) / (total + 1)) * 100,
+      body: `
+        <div class="clarify-progress">${dots}</div>
+        <div class="clarify-question">${esc(q.question)}</div>
+        ${inputHtml}
+      `,
+      footer: `
+        ${idx > 0 ? `<button type="button" class="clarify-back" id="clarifyBack">&lt; GO BACK</button>` : `<span></span>`}
+        <button type="button" class="clarify-next" id="clarifyNext">${isLast ? 'REVIEW BUILD &gt;' : 'NEXT &gt;'}</button>
+      `
+    });
 
     const textInput = gid('clarifyInner').querySelector('.clarify-text-input');
 
@@ -605,6 +1648,45 @@
     }
   }
 
+  function renderClarifySummary() {
+    clarifyStage = 'summary';
+    const total = clarifyQuestions.length;
+    const board = clarifyAnswers.board || 'No preference';
+    const power = clarifyAnswers.power || 'No preference';
+    renderClarifyFrame({
+      title: 'Review before build',
+      subtitle: 'One last check before Mertle generates the full guide.',
+      progressPct: 100,
+      body: `
+        <div class="clarify-summary">
+          <div class="clarify-summary-row">
+            <span class="clarify-summary-label">Prompt</span>
+            <span class="clarify-summary-value">${esc(clarifyOriginalPrompt)}</span>
+          </div>
+          <div class="clarify-summary-row">
+            <span class="clarify-summary-label">Board</span>
+            <span class="clarify-summary-value">${esc(board)}</span>
+          </div>
+          <div class="clarify-summary-row">
+            <span class="clarify-summary-label">Power</span>
+            <span class="clarify-summary-value">${esc(power)}</span>
+          </div>
+          <div class="clarify-summary-row">
+            <span class="clarify-summary-label">Skill level</span>
+            <span class="clarify-summary-value">${esc(normalizeSkillLabel(getSkill()))}</span>
+          </div>
+          <div class="clarify-summary-note">Answered ${total} setup question${total === 1 ? '' : 's'}.</div>
+        </div>
+      `,
+      footer: `
+        <button type="button" class="clarify-back" id="clarifySummaryBack">&lt; GO BACK</button>
+        <button type="button" class="clarify-next clarify-confirm" id="clarifyConfirm">LOOKS GOOD - BUILD IT</button>
+      `
+    });
+    gid('clarifyConfirm')?.addEventListener('click', finishClarify);
+    gid('clarifySummaryBack')?.addEventListener('click', () => renderClarifyQuestion(Math.max(clarifyQuestions.length - 1, 0)));
+  }
+
   function showClarifyOverlay() {
     gid('clarifyBg').classList.add('open');
     renderClarifyQuestion(0);
@@ -612,6 +1694,9 @@
 
   /* ── Core generate (no UI setup — called after UI is ready) ── */
   async function _doGenerate(text, clarifications) {
+    const isRevision = !!lastGuide;
+    buildNavCleanup();
+    buildNavCleanup = () => {};
     buildOutput.classList.add('active');
     buildOutput.innerHTML = '';
     buildOutput.classList.add('streaming-cursor');
@@ -648,7 +1733,7 @@
       controller = new AbortController();
       const res = await fetch('/api/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ prompt: apiPrompt, skill: getSkill(), age: getAge(), clarifications }),
         signal: controller.signal
       });
@@ -668,13 +1753,18 @@
         const { done, value } = await reader.read(); if (done) break;
         buf += dec.decode(value, { stream: true });
         const bl = buf.split('\n'); buf = bl.pop();
-        for (const b of bl) { const p = parseLine(b); if (!p) continue; if (p.error) { err2 = p.error; continue; } if (p.t) { accumulated += p.t; if (!typeTimer) startTyping(); } }
+        for (const b of bl) { const p = parseLine(b); if (!p) continue; if (p.error) { err2 = p.error; continue; } if (p.replacing) { accumulated = ''; displayed = 0; stopTyping(); buildOutput.innerHTML = ''; continue; } if (p.t) { if (thinkShown) { thinkEl.remove(); thinkShown = false; } accumulated += p.t; if (!typeTimer) startTyping(); } }
       }
       if (buf.trim()) { const p = parseLine(buf); if (p) { if (p.error) err2 = p.error; else if (p.t) { accumulated += p.t; } } }
       stopTyping(); displayed = accumulated.length;
+      const support = summarizeSupport(accumulated);
+      if (!support.ok) throw new Error(support.issues.join(' '));
       destroyWiregenInstances();
+      destroyInstructionBookInstances();
       buildOutput.innerHTML = renderMd(accumulated); scrollOut();
       mountWiregenDiagrams();
+      mountInstructionBooks();
+      setupBuildNavigation();
       buildOutput.classList.remove('streaming-cursor');
       if (thinkShown) { thinkEl.remove(); thinkShown = false; }
 
@@ -684,19 +1774,25 @@
       if (/^#\s/m.test(accumulated) && /## PARTS/i.test(accumulated) && /## STEPS/i.test(accumulated)) {
         lastPrompt = text; lastGuide = accumulated; lastSkill = getSkill();
         lastTs = addHist(text, lastSkill, accumulated); gid('btnDelete').style.display = '';
-        addMsg('Build guide ready. You can ask me to edit it.', 'bot');
-        addSimBtn();
+        outputContext.textContent = normalizeSkillLabel(lastSkill);
+        addMsg(isRevision ? 'Updated. Ask me to change anything.' : 'Build guide ready. You can ask me to edit it.', 'bot');
+        addSimActions(support);
       }
     } catch (err) {
       stopTyping(); buildOutput.classList.remove('streaming-cursor');
       if (thinkShown) { thinkEl.remove(); thinkShown = false; }
+      if (err.name !== 'AbortError') console.error('[mertle] generate error:', err);
       if (err.name === 'AbortError') {
         addMsg('Stopped.', 'bot');
         if (!accumulated) { buildOutput.classList.remove('active'); emptyState.classList.remove('hidden'); outputContext.textContent = ''; workspace.classList.add('no-build'); }
       } else {
         const m = err.message || '';
-        const friendly = /api.key|authentication|401|invalid.*key|unauthorized/i.test(m)
+        const friendly = /credit|billing|too.low|balance/i.test(m)
+          ? 'Whoops! Your Anthropic credit balance is too low — add credits at console.anthropic.com and try again.'
+          : /api.key|authentication|401|invalid.*key|unauthorized/i.test(m)
           ? 'Whoops! API key error — check your key in Settings and try again.'
+          : /failed validation|diagram unavailable|must include a valid wiregen diagram|unsupported functional parts/i.test(m)
+          ? m
           : /rate.limit|429|too many/i.test(m)
           ? 'Whoops! Too many requests — wait a moment and try again.'
           : /network|fetch|failed to fetch|load/i.test(m)
@@ -735,7 +1831,7 @@
         const ac = new AbortController();
         const tid = setTimeout(() => ac.abort(), 4000);
         const r = await fetch('/api/clarify', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
           body: JSON.stringify({ prompt: text }), signal: ac.signal
         });
         clearTimeout(tid);
@@ -766,17 +1862,114 @@
     await _doGenerate(text, typeof clarifications === 'string' ? clarifications : null);
   }
 
+  function buildSimProgressCard() {
+    const card = document.createElement('div');
+    card.className = 'sim-progress';
+    card.innerHTML = `
+      <div class="sim-progress-head">
+        <span class="sim-progress-title">SIMULATION</span>
+        <span class="sim-progress-percent">0%</span>
+      </div>
+      <div class="sim-progress-bar" aria-hidden="true">
+        <div class="sim-progress-fill"></div>
+      </div>
+      <div class="sim-progress-status">Waiting to start...</div>
+    `;
+    return {
+      card,
+      percent: card.querySelector('.sim-progress-percent'),
+      fill: card.querySelector('.sim-progress-fill'),
+      status: card.querySelector('.sim-progress-status')
+    };
+  }
+
+  function updateSimProgress(progressUi, progress = 0, message = 'Working...') {
+    const pct = Math.max(0, Math.min(100, Math.round(progress)));
+    progressUi.percent.textContent = `${pct}%`;
+    progressUi.fill.style.width = `${pct}%`;
+    progressUi.status.textContent = message;
+  }
+
+  async function readSimulationStream(res, onEvent) {
+    if (!res.body) throw new Error('Streaming not supported');
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    function parseLine(line) {
+      if (!line.startsWith('data: ')) return null;
+      const data = line.slice(6).trim();
+      if (!data || data === '[DONE]') return null;
+      return JSON.parse(data);
+    }
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        const payload = parseLine(line);
+        if (payload) onEvent(payload);
+      }
+    }
+
+    if (buf.trim()) {
+      const payload = parseLine(buf);
+      if (payload) onEvent(payload);
+    }
+  }
+
   /* ── Simulate ── */
+  function addSimActions(support) {
+    if (support.canSimulate) {
+      addSimBtn();
+    } else if (support.supportedDiagram && support.simulationBlockers?.length) {
+      const note = document.createElement('p');
+      note.className = 'sim-note';
+      const blockers = support.simulationBlockers;
+      note.textContent = `Simulation unavailable: ${blockers.join(', ')} ${blockers.length === 1 ? 'is' : 'are'} not supported in Wokwi.`;
+      buildOutput.appendChild(note);
+    }
+  }
+
   function addSimBtn() {
     const btn = document.createElement('button'); btn.classList.add('sim-btn'); btn.innerHTML = 'SIMULATE &gt;&gt;';
     btn.addEventListener('click', async () => {
-      btn.disabled = true; btn.textContent = 'GENERATING SIM...';
+      btn.disabled = true;
+      btn.textContent = 'GENERATING SIM...';
+      const progressUi = buildSimProgressCard();
+      buildOutput.appendChild(progressUi.card);
+      scrollOut();
       try {
-        const res = await fetch('/api/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: lastPrompt, guide: lastGuide }) });
+        const res = await fetch('/api/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() }, body: JSON.stringify({ prompt: lastPrompt, guide: lastGuide }) });
         if (!res.ok) { const { error } = await res.json(); throw new Error(error); }
-        const { embedUrl, projectUrl } = await res.json();
+
+        let result = null;
+        await readSimulationStream(res, (payload) => {
+          if (payload.error) throw new Error(payload.error);
+          if (payload.unsupported) {
+            result = payload;
+            updateSimProgress(progressUi, payload.progress ?? 100, payload.message || 'Simulation unavailable.');
+            return;
+          }
+          updateSimProgress(progressUi, payload.progress ?? 0, payload.message || 'Working...');
+          if (payload.done) result = payload;
+        });
+
+        if (result?.unsupported) {
+          progressUi.card.remove();
+          addMsg(`Simulation not available — this project uses parts Wokwi doesn't support: ${result.reason}`, 'bot');
+          btn.innerHTML = 'SIMULATE &gt;&gt;';
+          btn.disabled = false;
+          return;
+        }
+
+        const { embedUrl, projectUrl } = result || {};
         if (!embedUrl?.startsWith('https://wokwi.com/') || !projectUrl?.startsWith('https://wokwi.com/')) throw new Error('Invalid simulation URL');
         btn.remove();
+        updateSimProgress(progressUi, 100, 'Simulation ready.');
         const fc = document.createElement('div'); fc.classList.add('sim-frame-container');
         const fr = document.createElement('iframe'); fr.classList.add('sim-frame'); fr.src = embedUrl; fr.setAttribute('allowfullscreen', '');
         fc.appendChild(fr); buildOutput.appendChild(fc);
@@ -784,7 +1977,12 @@
         const lt = document.createTextNode('open full editor \u2192 ');
         const la = document.createElement('a'); la.href = projectUrl; la.target = '_blank'; la.rel = 'noopener noreferrer'; la.textContent = projectUrl;
         lk.appendChild(lt); lk.appendChild(la); buildOutput.appendChild(lk); scrollOut();
-      } catch (e) { btn.innerHTML = 'SIMULATE &gt;&gt;'; btn.disabled = false; addMsg('Sim error: ' + e.message, 'bot'); }
+      } catch (e) {
+        progressUi.card.remove();
+        btn.innerHTML = 'SIMULATE &gt;&gt;';
+        btn.disabled = false;
+        addMsg('Sim error: ' + e.message, 'bot');
+      }
     });
     buildOutput.appendChild(btn); scrollOut();
   }
@@ -809,7 +2007,7 @@
     const k = keyInput.value.trim(); if (!k) { keyStatus.textContent = 'enter a key'; return; }
     saveKeyBtn.disabled = true; saveKeyBtn.textContent = '...'; keyStatus.textContent = '';
     try {
-      const r = await fetch('/api/key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: k }) });
+      const r = await fetch('/api/key', { method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() }, body: JSON.stringify({ key: k }) });
       if (!r.ok) { const { error } = await r.json(); throw new Error(error); }
       keyStatus.style.color = 'var(--accent)'; keyStatus.textContent = 'saved!';
       setTimeout(() => { keyStatus.textContent = ''; keyStatus.style.color = ''; }, 2000);
@@ -817,7 +2015,16 @@
     finally { saveKeyBtn.disabled = false; saveKeyBtn.textContent = 'SAVE KEY'; }
   }
 
-  function openSettings() { modalBg.classList.add('open'); keyInput.focus(); }
+  function openSettings() {
+    modalBg.classList.add('open');
+    keyInput.focus();
+    const nameEl = gid('profileNameInput');
+    const bioEl = gid('profileBioInput');
+    const avatarEl = gid('profileAvatarInput');
+    if (nameEl) nameEl.value = profileName;
+    if (bioEl) bioEl.value = profileBio;
+    if (avatarEl) avatarEl.value = profileAvatar;
+  }
   function closeSettings() { modalBg.classList.remove('open'); if (_settingsTrigger) { _settingsTrigger.focus(); _settingsTrigger = null; } }
 
   /* ── Focus trap ── */
@@ -831,6 +2038,17 @@
   }
 
   onMount(() => {
+    /* ── Auth: verify session, redirect to /auth if not logged in ── */
+    fetch('/api/auth/session')
+      .then(r => r.json())
+      .then(d => {
+        if (!d.authenticated) { goto('/auth'); return; }
+        csrfToken = d.csrfToken ?? sessionStorage.getItem('csrfToken') ?? '';
+        loadProfile();
+        initSync();
+      })
+      .catch(() => goto('/auth'));
+
     /* Set DOM refs */
     hero = gid('hero'); heroInput = gid('heroInput'); heroGo = gid('heroGo');
     chatInput = gid('chatInput'); sendBtn = gid('sendBtn'); charCount = gid('charCount');
@@ -848,12 +2066,25 @@
     chatToggle = gid('chatToggle');
     workspace = document.querySelector('main.workspace');
 
+    /* Initialise 2 clouds with random starting ideas */
+    const pick = (exclude) => {
+      const pool = exclude ? PROJECT_IDEAS.filter(p => p !== exclude) : PROJECT_IDEAS;
+      return pool[Math.floor(Math.random() * pool.length)];
+    };
+    const first = pick();
+    cloudProps = [
+      { idea: first,       cls: 'cloud-1' },
+      { idea: pick(first), cls: 'cloud-2' },
+    ];
+
     /* Expose globals for inline onclick handlers in renderMd() output */
     window.toggleCode = toggleCode;
     window.copyCode = copyCode;
     window.downloadCode = downloadCode;
     window.persistTitle = persistTitle;
     window.shopAllOnAmazon = shopAllOnAmazon;
+    window.triggerProjectEdit = focusProjectEdit;
+    window.jumpToBuildSection = jumpToBuildSection;
 
     /* Input handlers */
     chatInput.addEventListener('input', () => { charCount.textContent = `${chatInput.value.length}/300`; });
@@ -875,8 +2106,10 @@
     };
     new ResizeObserver(updateChatPlaceholder).observe(chatInput);
     updateChatPlaceholder();
-    heroInput.addEventListener('keydown', e => { if (e.key === 'Enter') send(heroInput.value.trim()); });
+    heroInput.addEventListener('input', updateHeroBuildState);
+    heroInput.addEventListener('keydown', e => { if (e.key === 'Enter' && heroInput.value.trim().length >= 10) send(heroInput.value.trim()); });
     heroGo.addEventListener('click', () => send(heroInput.value.trim()));
+    gid('heroExamples').querySelectorAll('.hero-example-chip').forEach(btn => btn.addEventListener('click', () => applyExamplePrompt(btn.dataset.prompt)));
 
     /* Topbar */
     gid('btnNew').addEventListener('click', newSession);
@@ -886,14 +2119,28 @@
       if (!lastGuide) { addMsg('No build to export yet — generate a project first.', 'bot'); return; }
       const ne = buildOutput.querySelector('.project-name');
       let g = lastGuide; if (ne) g = g.replace(/^# .+$/m, '# ' + ne.textContent.trim());
-      const text = ['mertle.bot Build Guide | Skill: ' + (lastSkill || getSkill()), 'Prompt: ' + lastPrompt, '', g].join('\n');
-      navigator.clipboard.writeText(text).then(() => { const b = gid('btnExport'); b.classList.add('active'); setTimeout(() => b.classList.remove('active'), 1200); }).catch(() => { addMsg('Copy failed — check browser permissions', 'bot'); });
+      downloadProjectFolder(g, lastPrompt);
+      const b = gid('btnExport'); b.classList.add('active'); setTimeout(() => b.classList.remove('active'), 1200);
+    });
+    gid('btnExportPdf').addEventListener('click', exportPdf);
+    gid('btnDownloadMd').addEventListener('click', downloadMarkdownGuide);
+    gid('btnCopyCode').addEventListener('click', async () => {
+      const btn = gid('btnCopyCode');
+      try {
+        await copyAllCodeBlocks();
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = '📋 Copy All Code'; }, 1200);
+      } catch {
+        btn.textContent = 'Copy failed';
+        setTimeout(() => { btn.textContent = '📋 Copy All Code'; }, 1200);
+      }
     });
     gid('btnSettings').addEventListener('click', () => { _settingsTrigger = document.activeElement; openSettings(); });
+    gid('btnLogout').addEventListener('click', logout);
     gid('btnDelete').addEventListener('click', () => { if (!lastGuide) return; showDeleteConfirm(getProjectName({ guide: lastGuide, prompt: lastPrompt }), lastGuide, () => deleteFromHist(lastTs, null)); });
 
     /* Delete modal */
-    gid('delModalDownload').addEventListener('click', () => { if (_del.guide && _del.prompt) downloadGuide(_del.guide, _del.prompt); });
+    gid('delModalDownload').addEventListener('click', () => { if (_del.guide && _del.prompt) downloadProjectFolder(_del.guide, _del.prompt); });
     gid('delModalConfirm').addEventListener('click', () => { if (_del.cb) _del.cb(); closeDelModal(); });
     gid('delModalCancel').addEventListener('click', closeDelModal);
     gid('delModalBg').addEventListener('click', e => { if (e.target === gid('delModalBg')) closeDelModal(); });
@@ -960,6 +2207,34 @@
     saveKeyBtn.addEventListener('click', saveKey);
     keyInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveKey(); });
 
+    /* Profile + account event listeners */
+    gid('profileSaveBtn').addEventListener('click', () => {
+      profileName = gid('profileNameInput').value;
+      profileBio = gid('profileBioInput').value;
+      profileAvatar = gid('profileAvatarInput').value;
+      saveProfile();
+    });
+    gid('pwSaveBtn').addEventListener('click', () => {
+      pwCurrent = gid('pwCurrentInput').value;
+      pwNew = gid('pwNewInput').value;
+      pwConfirm = gid('pwConfirmInput').value;
+      changePassword();
+    });
+    gid('emailSaveBtn').addEventListener('click', () => {
+      emailNew = gid('emailNewInput').value;
+      emailPw = gid('emailPwInput').value;
+      changeEmail();
+    });
+    gid('syncNowBtn').addEventListener('click', () => initSync());
+
+    /* History search */
+    gid('histSearch').addEventListener('input', e => {
+      const q = e.target.value.trim().toLowerCase();
+      histList.querySelectorAll('.hist-item').forEach(el => {
+        el.style.display = q && !el.textContent.toLowerCase().includes(q) ? 'none' : '';
+      });
+    });
+
     /* Init sequence */
     applyTheme(localStorage.getItem('mrt-theme') || 'solder');
     applySkill(Number(localStorage.getItem('mrt-skill')) || 1);
@@ -968,7 +2243,9 @@
     renderHist();
     renderHeroRecent();
     checkKey();
+    updateHeroBuildState();
     heroInput.focus();
+
   });
 
   /* ── Auth Functions ── */
@@ -1047,13 +2324,38 @@
 
 <!-- ═══ HERO ═══ -->
 <div class="hero" id="hero">
+  <!-- Floating clouds -->
+  <div class="hero-clouds">
+    {#each cloudProps as c, i}
+      <div class="cloud {c.cls}"
+           role="button"
+           tabindex="0"
+           on:animationiteration={() => rotateCloudIdea(i)}
+           on:click={() => { heroInput.value = c.idea; send(c.idea); }}
+           on:keydown={e => { if (e.key === 'Enter' || e.key === ' ') { heroInput.value = c.idea; send(c.idea); } }}
+      >
+        <div class="cloud-rect cloud-rect-a"></div>
+        <div class="cloud-rect cloud-rect-b"></div>
+        <div class="cloud-label">
+          {c.idea}
+          <span class="cloud-label-hint">CLICK TO BUILD</span>
+        </div>
+      </div>
+    {/each}
+  </div>
   <div class="hero-card">
     <div class="hero-title">mertle.bot</div>
     <div class="hero-tag">describe it. build it.</div>
     <div class="hero-desc">Describe any electronics project and get a complete wiring diagram, parts list, and ready-to-flash code — instantly.</div>
     <div class="hero-input-row">
       <input class="hero-input" id="heroInput" type="text" placeholder="e.g. motion-sensing alarm..." autocomplete="new-password" spellcheck="false" maxlength="300" aria-label="Describe your electronics project"/>
-      <button type="button" class="hero-go" id="heroGo">BUILD</button>
+      <button type="button" class="hero-go" id="heroGo" disabled>BUILD</button>
+    </div>
+    <div class="hero-prompt-hint" id="heroPromptHint">Describe your project in at least 10 characters.</div>
+    <div class="hero-examples" id="heroExamples">
+      {#each HERO_EXAMPLES as example}
+        <button type="button" class="hero-example-chip" data-prompt={example}>{example}</button>
+      {/each}
     </div>
     <div class="hero-hint">SELECT SKILL LEVEL</div>
     <div class="hero-skills" id="heroSkills">
@@ -1063,6 +2365,7 @@
       <button type="button" class="hero-skill" data-skill="4">HACKER</button>
       <button type="button" class="hero-skill" data-skill="5">EXPERT</button>
     </div>
+    <div class="hero-skill-help" id="heroSkillHelp">Maximum hand-holding, no experience needed.</div>
     <div class="hero-recent" id="heroRecent"></div>
     <div class="sel-bar" id="heroSelBar">
       <span class="sel-count" id="heroSelCount"></span>
@@ -1085,7 +2388,7 @@
       <button type="button" class="topbar-btn" id="btnHistory" title="History">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12,7 12,12 16,14"/></svg>
       </button>
-      <button type="button" class="topbar-btn" id="btnExport" title="Copy to clipboard">
+      <button type="button" class="topbar-btn" id="btnExport" title="Download guide">
         <svg viewBox="0 0 24 24"><path d="M21,15v4a2,2 0 0,1-2,2H5a2,2 0 0,1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       </button>
       <button type="button" class="topbar-btn" id="btnDelete" title="Delete project" style="display:none">
@@ -1118,6 +2421,9 @@
       <button type="button" class="topbar-btn" id="btnSettings" title="Settings">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4,15a1.65,1.65 0 0,0,.33,1.82l.06,.06a2,2 0 1,1-2.83,2.83l-.06-.06a1.65,1.65 0 0,0-1.82-.33 1.65,1.65 0 0,0-1,1.51V21a2,2 0 0,1-4,0v-.09A1.65,1.65 0 0,0 9,19.4a1.65,1.65 0 0,0-1.82,.33l-.06,.06a2,2 0 1,1-2.83-2.83l.06-.06A1.65,1.65 0 0,0 4.68,15a1.65,1.65 0 0,0-1.51-1H3a2,2 0 0,1 0-4h.09A1.65,1.65 0 0,0 4.6,9a1.65,1.65 0 0,0-.33-1.82l-.06-.06a2,2 0 1,1 2.83-2.83l.06,.06A1.65,1.65 0 0,0 9,4.68a1.65,1.65 0 0,0 1-1.51V3a2,2 0 0,1 4,0v.09a1.65,1.65 0 0,0 1,1.51 1.65,1.65 0 0,0 1.82-.33l.06-.06a2,2 0 1,1 2.83,2.83l-.06,.06A1.65,1.65 0 0,0 19.4,9a1.65,1.65 0 0,0 1.51,1H21a2,2 0 0,1 0,4h-.09A1.65,1.65 0 0,0 19.4,15z"/></svg>
       </button>
+      <button type="button" class="topbar-btn" id="btnLogout" title="Sign out">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
     </div>
 
     <!-- workspace -->
@@ -1143,9 +2449,15 @@
       <section class="output">
         <div class="output-head">
           <span class="pane-label">build output</span>
+          <div class="output-head-actions">
+            <button type="button" class="output-head-btn" id="btnExportPdf">📄 Export PDF</button>
+            <button type="button" class="output-head-btn" id="btnDownloadMd">⬇️ Download Markdown</button>
+            <button type="button" class="output-head-btn" id="btnCopyCode">📋 Copy All Code</button>
+          </div>
           <span class="output-context" id="outputContext"></span>
         </div>
         <div class="output-scroll" id="outputScroll">
+          <div class="loading-feed" id="loadingFeed" hidden></div>
           <div class="empty" id="emptyState">
             <div class="empty-icon"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10"/></svg></div>
             <div class="empty-title">NO BUILD YET</div>
@@ -1162,7 +2474,11 @@
 <div class="hist" id="histPanel">
   <div class="hist-head">
     <span class="hist-title">Build History</span>
+    <span class="hist-sync-dot" id="histSyncDot" title="Cloud sync status"></span>
     <button type="button" class="hist-close" id="histClose" aria-label="Close">&times;</button>
+  </div>
+  <div class="hist-search-row">
+    <input class="hist-search" id="histSearch" type="search" placeholder="Search projects..." autocomplete="off" aria-label="Search build history"/>
   </div>
   <div class="hist-list" id="histList">
     <div class="hist-empty">No builds yet</div>
@@ -1192,11 +2508,14 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
     <div class="modal-title" id="settingsModalTitle">SETTINGS</div>
     <div class="modal-section">
-      <div class="modal-label">API Key</div>
-      <div class="modal-input-row"><input class="modal-input" id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off"/></div>
-      <button type="button" class="modal-btn" id="saveKeyBtn">SAVE KEY</button>
+      <div class="modal-label">Anthropic API Key</div>
+      <div class="modal-hint" style="margin-bottom:10px;line-height:1.5">mertle.bot uses the Claude API to generate build guides. Your key is stored only on this machine and sent only to Anthropic.</div>
+      <div class="modal-input-row"><input class="modal-input" id="keyInput" type="password" placeholder="Paste your sk-ant-... key here" autocomplete="off"/></div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+        <button type="button" class="modal-btn" id="saveKeyBtn">SAVE KEY</button>
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" class="modal-hint" style="text-decoration:none;border-bottom:1px solid var(--text-muted)">Get a free API key &rarr;</a>
+      </div>
       <div class="modal-error" id="keyStatus"></div>
-      <div class="modal-hint">get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a></div>
     </div>
     <div class="modal-divider"></div>
     <div class="modal-section">
@@ -1208,6 +2527,7 @@
         <button type="button" class="chip" data-skill="4">Hacker</button>
         <button type="button" class="chip" data-skill="5">Expert</button>
       </div>
+      <div class="modal-hint" id="skillHelpModal">Maximum hand-holding, no experience needed.</div>
     </div>
     <div class="modal-divider"></div>
     <div class="modal-section">
@@ -1231,6 +2551,71 @@
       <div class="modal-label">Font Size</div>
       <div class="modal-slider-row"><input class="modal-slider" id="fontSlider" type="range" min="80" max="200" step="10" value="100"/><span class="modal-val" id="fontVal">100%</span></div>
     </div>
+    <div class="modal-divider"></div>
+
+    <!-- Profile section -->
+    <div class="modal-section">
+      <div class="modal-label">Profile</div>
+      <div class="modal-hint" style="margin-bottom:6px">Signed in as <span id="profileEmailDisplay" style="color:var(--primary)">{profileEmail}</span></div>
+      <div class="modal-input-row"><input class="modal-input" type="text" id="profileNameInput" placeholder="Display name" maxlength="80" autocomplete="off"/></div>
+      <div class="modal-input-row" style="margin-top:6px"><input class="modal-input" type="url" id="profileAvatarInput" placeholder="Avatar URL (https://...)" maxlength="500" autocomplete="off"/></div>
+      <div class="modal-input-row" style="margin-top:6px"><textarea class="modal-input" id="profileBioInput" placeholder="Short bio (optional)" maxlength="500" rows="3" style="resize:vertical;min-height:60px"></textarea></div>
+      <button type="button" class="modal-btn" id="profileSaveBtn" style="margin-top:6px">SAVE PROFILE</button>
+      {#if profileError}<div class="modal-error" style="margin-top:4px">{profileError}</div>{/if}
+      {#if profileOk}<div class="modal-error" style="color:var(--primary);margin-top:4px">{profileOk}</div>{/if}
+    </div>
+
+    <div class="modal-divider"></div>
+
+    <!-- Notifications section -->
+    <div class="modal-section">
+      <div class="modal-label">Notifications</div>
+      <label class="modal-toggle-row">
+        <input type="checkbox" id="notifBuildInput" bind:checked={notifEmailBuild}/>
+        <span class="modal-toggle-label">Email when build complete</span>
+      </label>
+      <label class="modal-toggle-row">
+        <input type="checkbox" id="notifDigestInput" bind:checked={notifEmailDigest}/>
+        <span class="modal-toggle-label">Weekly project digest</span>
+      </label>
+    </div>
+
+    <div class="modal-divider"></div>
+
+    <!-- Account section: change email -->
+    <div class="modal-section">
+      <div class="modal-label">Change Email</div>
+      <div class="modal-input-row"><input class="modal-input" type="email" id="emailNewInput" placeholder="New email address" maxlength="254" autocomplete="off"/></div>
+      <div class="modal-input-row" style="margin-top:6px"><input class="modal-input" type="password" id="emailPwInput" placeholder="Current password" autocomplete="current-password"/></div>
+      <button type="button" class="modal-btn" id="emailSaveBtn" style="margin-top:6px">UPDATE EMAIL</button>
+      {#if emailError}<div class="modal-error" style="margin-top:4px">{emailError}</div>{/if}
+      {#if emailOk}<div class="modal-error" style="color:var(--primary);margin-top:4px">{emailOk}</div>{/if}
+    </div>
+
+    <div class="modal-divider"></div>
+
+    <!-- Account section: change password -->
+    <div class="modal-section">
+      <div class="modal-label">Change Password</div>
+      <div class="modal-input-row"><input class="modal-input" type="password" id="pwCurrentInput" placeholder="Current password" autocomplete="current-password"/></div>
+      <div class="modal-input-row" style="margin-top:6px"><input class="modal-input" type="password" id="pwNewInput" placeholder="New password (min 8 chars)" autocomplete="new-password"/></div>
+      <div class="modal-input-row" style="margin-top:6px"><input class="modal-input" type="password" id="pwConfirmInput" placeholder="Confirm new password" autocomplete="new-password"/></div>
+      <button type="button" class="modal-btn" id="pwSaveBtn" style="margin-top:6px">CHANGE PASSWORD</button>
+      {#if pwError}<div class="modal-error" style="margin-top:4px">{pwError}</div>{/if}
+      {#if pwOk}<div class="modal-error" style="color:var(--primary);margin-top:4px">{pwOk}</div>{/if}
+    </div>
+
+    <div class="modal-divider"></div>
+
+    <!-- Sync status -->
+    <div class="modal-section">
+      <div class="modal-label">Cloud Sync</div>
+      <div class="modal-hint">
+        {#if syncStatus === 'syncing'}Syncing...{:else if syncStatus === 'synced'}Projects synced{:else if syncStatus === 'error'}Sync failed — will retry on next visit{:else}Not synced yet{/if}
+      </div>
+      <button type="button" class="modal-btn" id="syncNowBtn" style="margin-top:6px">SYNC NOW</button>
+    </div>
+
     <button type="button" class="modal-close-btn" id="modalCloseBtn">CLOSE</button>
   </div>
 </div>
