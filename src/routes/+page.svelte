@@ -103,6 +103,17 @@
   let csrfToken = '';
   function getCsrfHeaders() { return csrfToken ? { 'X-CSRF-Token': csrfToken } : {}; }
 
+  /* ── Profile state ── */
+  let profileName = '', profileBio = '', profileAvatar = '';
+  let profileEmail = '', profileSaving = false, profileError = '', profileOk = '';
+  let pwCurrent = '', pwNew = '', pwConfirm = '', pwError = '', pwOk = '', pwSaving = false;
+  let emailNew = '', emailPw = '', emailError = '', emailOk = '', emailSaving = false;
+  let notifEmailBuild = false, notifEmailDigest = false;
+  let privPublic = false;
+
+  /* ── Cloud sync state ── */
+  let syncStatus = 'idle'; // idle | syncing | synced | error
+
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     sessionStorage.removeItem('csrfToken');
@@ -491,9 +502,11 @@
   function saveHist(h) { localStorage.setItem('mrt-history', JSON.stringify(h.slice(0, 20))); }
   function addHist(prompt, skill, guide) {
     const ts = Date.now();
+    const cloudId = crypto.randomUUID();
     const h = getHist();
-    h.unshift({ prompt, skill, guide: guide || '', chat: chatLog.innerHTML, ts });
+    h.unshift({ prompt, skill, guide: guide || '', chat: chatLog.innerHTML, ts, cloudId });
     commitHistory(h);
+    syncProjectToCloud({ cloudId, prompt, skill, guide: guide || '', ts });
     return ts;
   }
   function updateHistChat() {
@@ -889,6 +902,160 @@
   }
   function getSkill() { return SKILLS[Number(localStorage.getItem('mrt-skill')) || 1] || 'MONKEY'; }
   function getAge() { return Number(localStorage.getItem('mrt-age')) || 25; }
+
+  /* ── Cloud sync helpers ── */
+  function extractTitle(guide) {
+    const m = (guide || '').match(/^#\s+(.+)$/m);
+    return m ? m[1].trim().slice(0, 100) : '';
+  }
+
+  async function syncProjectToCloud({ cloudId, prompt, skill, guide, ts }) {
+    if (!csrfToken || !cloudId) return;
+    const title = extractTitle(guide) || prompt.slice(0, 60);
+    const chatHtml = chatLog ? chatLog.innerHTML : '';
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+        body: JSON.stringify({ id: cloudId, title, prompt, skill, guide, chat_html: chatHtml, tags: [], client_ts: ts, updated_at: ts }),
+      });
+      if (res.status === 409) {
+        await fetch(`/api/projects/${cloudId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+          body: JSON.stringify({ title, prompt, skill, guide, chat_html: chatHtml }),
+        });
+      }
+    } catch { /* background, silent */ }
+  }
+
+  function mergeCloudProjects(updates, deletedIds) {
+    let h = getHist();
+    const deletedSet = new Set(deletedIds || []);
+    h = h.filter(p => !p.cloudId || !deletedSet.has(p.cloudId));
+    for (const proj of (updates || [])) {
+      const idx = h.findIndex(p => p.cloudId === proj.id);
+      if (idx !== -1) {
+        if ((proj.updated_at || 0) > (h[idx].syncedAt || h[idx].ts || 0)) {
+          h[idx] = { ...h[idx], prompt: proj.prompt || h[idx].prompt, skill: proj.skill || h[idx].skill, guide: proj.guide || h[idx].guide, chat: proj.chat_html || h[idx].chat, syncedAt: proj.updated_at, tags: proj.tags || h[idx].tags };
+        }
+      } else {
+        h.push({ cloudId: proj.id, prompt: proj.prompt || proj.title || '', skill: proj.skill || 'MONKEY', guide: proj.guide || '', chat: proj.chat_html || '', ts: proj.client_ts || proj.created_at, syncedAt: proj.updated_at, tags: proj.tags || [] });
+      }
+    }
+    h.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    localStorage.setItem('mrt-history', JSON.stringify(h.slice(0, 50)));
+    renderHist();
+    renderHeroRecent();
+  }
+
+  function updateSyncDot() {
+    const dot = gid('histSyncDot');
+    if (!dot) return;
+    dot.className = 'hist-sync-dot hist-sync-' + syncStatus;
+    dot.title = { idle: 'Not synced', syncing: 'Syncing…', synced: 'Synced to cloud', error: 'Sync failed' }[syncStatus] || '';
+  }
+
+  async function initSync() {
+    if (!csrfToken) return;
+    const since = Number(localStorage.getItem('mrt-last-sync') || '0');
+    const localItems = getHist().filter(p => p.cloudId).map(p => ({
+      id: p.cloudId, title: extractTitle(p.guide) || p.prompt.slice(0, 60),
+      prompt: p.prompt, skill: p.skill, guide: p.guide, chat_html: p.chat || '',
+      tags: p.tags || [], client_ts: p.ts, updated_at: p.syncedAt || p.ts,
+    }));
+    try {
+      syncStatus = 'syncing'; updateSyncDot();
+      const res = await fetch('/api/projects/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+        body: JSON.stringify({ since, changes: localItems }),
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      mergeCloudProjects(data.updates, data.deleted_ids);
+      localStorage.setItem('mrt-last-sync', String(data.server_time || Date.now()));
+      syncStatus = 'synced';
+    } catch { syncStatus = 'error'; }
+    updateSyncDot();
+  }
+
+  /* ── Profile & account functions ── */
+  async function loadProfile() {
+    if (!csrfToken) return;
+    try {
+      const res = await fetch('/api/user/profile', { headers: getCsrfHeaders() });
+      if (!res.ok) return;
+      const p = await res.json();
+      profileName = p.display_name || '';
+      profileBio = p.bio || '';
+      profileAvatar = p.avatar_url || '';
+      profileEmail = p.email || '';
+      notifEmailBuild = !!(p.notification_prefs?.emailBuildComplete);
+      notifEmailDigest = !!(p.notification_prefs?.emailWeeklyDigest);
+      privPublic = !!(p.privacy_settings?.publicProfile);
+      const el = gid('profileEmailDisplay');
+      if (el) el.textContent = p.email || '';
+    } catch { /* silent */ }
+  }
+
+  async function saveProfile() {
+    profileError = ''; profileOk = ''; profileSaving = true;
+    try {
+      const res = await fetch('/api/user/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+        body: JSON.stringify({
+          display_name: profileName.trim(),
+          avatar_url: profileAvatar.trim() || null,
+          bio: profileBio.trim(),
+          notification_prefs: { emailBuildComplete: notifEmailBuild, emailWeeklyDigest: notifEmailDigest },
+          privacy_settings: { publicProfile: privPublic },
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) { profileError = d.error || 'Save failed'; }
+      else { profileOk = 'Profile saved!'; setTimeout(() => { profileOk = ''; }, 2500); }
+    } catch { profileError = 'Network error'; }
+    finally { profileSaving = false; }
+  }
+
+  async function changePassword() {
+    pwError = ''; pwOk = '';
+    if (!pwCurrent) { pwError = 'Enter your current password'; return; }
+    if (!pwNew || pwNew.length < 8) { pwError = 'New password must be at least 8 characters'; return; }
+    if (pwNew !== pwConfirm) { pwError = 'Passwords do not match'; return; }
+    pwSaving = true;
+    try {
+      const res = await fetch('/api/user/password', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+        body: JSON.stringify({ current_password: pwCurrent, new_password: pwNew }),
+      });
+      const d = await res.json();
+      if (!res.ok) { pwError = d.error || 'Failed'; }
+      else { pwOk = 'Password changed!'; pwCurrent = pwNew = pwConfirm = ''; setTimeout(() => { pwOk = ''; }, 3000); }
+    } catch { pwError = 'Network error'; }
+    finally { pwSaving = false; }
+  }
+
+  async function changeEmail() {
+    emailError = ''; emailOk = '';
+    if (!emailNew || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNew.trim())) { emailError = 'Enter a valid email address'; return; }
+    if (!emailPw) { emailError = 'Enter your current password'; return; }
+    emailSaving = true;
+    try {
+      const res = await fetch('/api/user/email', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
+        body: JSON.stringify({ new_email: emailNew.trim(), current_password: emailPw }),
+      });
+      const d = await res.json();
+      if (!res.ok) { emailError = d.error || 'Failed'; }
+      else { emailOk = 'Email updated!'; profileEmail = d.email; const el = gid('profileEmailDisplay'); if (el) el.textContent = d.email; emailNew = emailPw = ''; setTimeout(() => { emailOk = ''; }, 3000); }
+    } catch { emailError = 'Network error'; }
+    finally { emailSaving = false; }
+  }
 
   /* ── Messages ── */
   function addMsg(text, role) {
@@ -1848,7 +2015,16 @@
     finally { saveKeyBtn.disabled = false; saveKeyBtn.textContent = 'SAVE KEY'; }
   }
 
-  function openSettings() { modalBg.classList.add('open'); keyInput.focus(); }
+  function openSettings() {
+    modalBg.classList.add('open');
+    keyInput.focus();
+    const nameEl = gid('profileNameInput');
+    const bioEl = gid('profileBioInput');
+    const avatarEl = gid('profileAvatarInput');
+    if (nameEl) nameEl.value = profileName;
+    if (bioEl) bioEl.value = profileBio;
+    if (avatarEl) avatarEl.value = profileAvatar;
+  }
   function closeSettings() { modalBg.classList.remove('open'); if (_settingsTrigger) { _settingsTrigger.focus(); _settingsTrigger = null; } }
 
   /* ── Focus trap ── */
@@ -1868,6 +2044,8 @@
       .then(d => {
         if (!d.authenticated) { goto('/auth'); return; }
         csrfToken = d.csrfToken ?? sessionStorage.getItem('csrfToken') ?? '';
+        loadProfile();
+        initSync();
       })
       .catch(() => goto('/auth'));
 
@@ -2029,6 +2207,34 @@
     saveKeyBtn.addEventListener('click', saveKey);
     keyInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveKey(); });
 
+    /* Profile + account event listeners */
+    gid('profileSaveBtn').addEventListener('click', () => {
+      profileName = gid('profileNameInput').value;
+      profileBio = gid('profileBioInput').value;
+      profileAvatar = gid('profileAvatarInput').value;
+      saveProfile();
+    });
+    gid('pwSaveBtn').addEventListener('click', () => {
+      pwCurrent = gid('pwCurrentInput').value;
+      pwNew = gid('pwNewInput').value;
+      pwConfirm = gid('pwConfirmInput').value;
+      changePassword();
+    });
+    gid('emailSaveBtn').addEventListener('click', () => {
+      emailNew = gid('emailNewInput').value;
+      emailPw = gid('emailPwInput').value;
+      changeEmail();
+    });
+    gid('syncNowBtn').addEventListener('click', () => initSync());
+
+    /* History search */
+    gid('histSearch').addEventListener('input', e => {
+      const q = e.target.value.trim().toLowerCase();
+      histList.querySelectorAll('.hist-item').forEach(el => {
+        el.style.display = q && !el.textContent.toLowerCase().includes(q) ? 'none' : '';
+      });
+    });
+
     /* Init sequence */
     applyTheme(localStorage.getItem('mrt-theme') || 'solder');
     applySkill(Number(localStorage.getItem('mrt-skill')) || 1);
@@ -2039,6 +2245,7 @@
     checkKey();
     updateHeroBuildState();
     heroInput.focus();
+
   });
 </script>
 
@@ -2175,7 +2382,11 @@
 <div class="hist" id="histPanel">
   <div class="hist-head">
     <span class="hist-title">Build History</span>
+    <span class="hist-sync-dot" id="histSyncDot" title="Cloud sync status"></span>
     <button type="button" class="hist-close" id="histClose" aria-label="Close">&times;</button>
+  </div>
+  <div class="hist-search-row">
+    <input class="hist-search" id="histSearch" type="search" placeholder="Search projects..." autocomplete="off" aria-label="Search build history"/>
   </div>
   <div class="hist-list" id="histList">
     <div class="hist-empty">No builds yet</div>
@@ -2248,6 +2459,71 @@
       <div class="modal-label">Font Size</div>
       <div class="modal-slider-row"><input class="modal-slider" id="fontSlider" type="range" min="80" max="200" step="10" value="100"/><span class="modal-val" id="fontVal">100%</span></div>
     </div>
+    <div class="modal-divider"></div>
+
+    <!-- Profile section -->
+    <div class="modal-section">
+      <div class="modal-label">Profile</div>
+      <div class="modal-hint" style="margin-bottom:6px">Signed in as <span id="profileEmailDisplay" style="color:var(--primary)">{profileEmail}</span></div>
+      <div class="modal-input-row"><input class="modal-input" type="text" id="profileNameInput" placeholder="Display name" maxlength="80" autocomplete="off"/></div>
+      <div class="modal-input-row" style="margin-top:6px"><input class="modal-input" type="url" id="profileAvatarInput" placeholder="Avatar URL (https://...)" maxlength="500" autocomplete="off"/></div>
+      <div class="modal-input-row" style="margin-top:6px"><textarea class="modal-input" id="profileBioInput" placeholder="Short bio (optional)" maxlength="500" rows="3" style="resize:vertical;min-height:60px"></textarea></div>
+      <button type="button" class="modal-btn" id="profileSaveBtn" style="margin-top:6px">SAVE PROFILE</button>
+      {#if profileError}<div class="modal-error" style="margin-top:4px">{profileError}</div>{/if}
+      {#if profileOk}<div class="modal-error" style="color:var(--primary);margin-top:4px">{profileOk}</div>{/if}
+    </div>
+
+    <div class="modal-divider"></div>
+
+    <!-- Notifications section -->
+    <div class="modal-section">
+      <div class="modal-label">Notifications</div>
+      <label class="modal-toggle-row">
+        <input type="checkbox" id="notifBuildInput" bind:checked={notifEmailBuild}/>
+        <span class="modal-toggle-label">Email when build complete</span>
+      </label>
+      <label class="modal-toggle-row">
+        <input type="checkbox" id="notifDigestInput" bind:checked={notifEmailDigest}/>
+        <span class="modal-toggle-label">Weekly project digest</span>
+      </label>
+    </div>
+
+    <div class="modal-divider"></div>
+
+    <!-- Account section: change email -->
+    <div class="modal-section">
+      <div class="modal-label">Change Email</div>
+      <div class="modal-input-row"><input class="modal-input" type="email" id="emailNewInput" placeholder="New email address" maxlength="254" autocomplete="off"/></div>
+      <div class="modal-input-row" style="margin-top:6px"><input class="modal-input" type="password" id="emailPwInput" placeholder="Current password" autocomplete="current-password"/></div>
+      <button type="button" class="modal-btn" id="emailSaveBtn" style="margin-top:6px">UPDATE EMAIL</button>
+      {#if emailError}<div class="modal-error" style="margin-top:4px">{emailError}</div>{/if}
+      {#if emailOk}<div class="modal-error" style="color:var(--primary);margin-top:4px">{emailOk}</div>{/if}
+    </div>
+
+    <div class="modal-divider"></div>
+
+    <!-- Account section: change password -->
+    <div class="modal-section">
+      <div class="modal-label">Change Password</div>
+      <div class="modal-input-row"><input class="modal-input" type="password" id="pwCurrentInput" placeholder="Current password" autocomplete="current-password"/></div>
+      <div class="modal-input-row" style="margin-top:6px"><input class="modal-input" type="password" id="pwNewInput" placeholder="New password (min 8 chars)" autocomplete="new-password"/></div>
+      <div class="modal-input-row" style="margin-top:6px"><input class="modal-input" type="password" id="pwConfirmInput" placeholder="Confirm new password" autocomplete="new-password"/></div>
+      <button type="button" class="modal-btn" id="pwSaveBtn" style="margin-top:6px">CHANGE PASSWORD</button>
+      {#if pwError}<div class="modal-error" style="margin-top:4px">{pwError}</div>{/if}
+      {#if pwOk}<div class="modal-error" style="color:var(--primary);margin-top:4px">{pwOk}</div>{/if}
+    </div>
+
+    <div class="modal-divider"></div>
+
+    <!-- Sync status -->
+    <div class="modal-section">
+      <div class="modal-label">Cloud Sync</div>
+      <div class="modal-hint">
+        {#if syncStatus === 'syncing'}Syncing...{:else if syncStatus === 'synced'}Projects synced{:else if syncStatus === 'error'}Sync failed — will retry on next visit{:else}Not synced yet{/if}
+      </div>
+      <button type="button" class="modal-btn" id="syncNowBtn" style="margin-top:6px">SYNC NOW</button>
+    </div>
+
     <button type="button" class="modal-close-btn" id="modalCloseBtn">CLOSE</button>
   </div>
 </div>

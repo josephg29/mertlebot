@@ -2,7 +2,10 @@ import { SESSION_COOKIE, deriveCsrfToken } from '$lib/server/auth.js';
 import { getSession, getUserById } from '$lib/server/db.js';
 
 // Routes that require an authenticated session
-const PROTECTED_PREFIXES = ['/api/generate', '/api/clarify', '/api/simulate', '/api/key'];
+const PROTECTED_PREFIXES = [
+  '/api/generate', '/api/clarify', '/api/simulate', '/api/key',
+  '/api/user', '/api/projects', '/api/folders',
+];
 // Routes that are part of auth itself — never apply session guard here
 const AUTH_PREFIXES = ['/api/auth/'];
 
@@ -123,7 +126,7 @@ export async function handle({ event, resolve }) {
     "script-src 'self' 'unsafe-inline'; " +
     "connect-src 'self'; " +
     "frame-src https://wokwi.com; " +
-    "img-src 'self' data:;"
+    "img-src 'self' data: https:;"
   );
   response.headers.delete('x-powered-by');
 

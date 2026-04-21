@@ -109,6 +109,56 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: '005_user_profile',
+    migrate(db) {
+      db.exec(`ALTER TABLE users ADD COLUMN display_name TEXT`);
+      db.exec(`ALTER TABLE users ADD COLUMN avatar_url TEXT`);
+      db.exec(`ALTER TABLE users ADD COLUMN bio TEXT`);
+      db.exec(`ALTER TABLE users ADD COLUMN notification_prefs TEXT NOT NULL DEFAULT '{}'`);
+      db.exec(`ALTER TABLE users ADD COLUMN privacy_settings TEXT NOT NULL DEFAULT '{}'`);
+    },
+  },
+  {
+    name: '006_projects',
+    sql: `
+      CREATE TABLE IF NOT EXISTS folders (
+        id         TEXT    PRIMARY KEY,
+        user_id    TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name       TEXT    NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_folders_user ON folders(user_id);
+
+      CREATE TABLE IF NOT EXISTS projects (
+        id         TEXT    PRIMARY KEY,
+        user_id    TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        folder_id  TEXT    REFERENCES folders(id) ON DELETE SET NULL,
+        title      TEXT    NOT NULL DEFAULT '',
+        prompt     TEXT    NOT NULL DEFAULT '',
+        skill      TEXT    NOT NULL DEFAULT 'MONKEY',
+        guide      TEXT    NOT NULL DEFAULT '',
+        chat_html  TEXT    NOT NULL DEFAULT '',
+        tags       TEXT    NOT NULL DEFAULT '[]',
+        version    INTEGER NOT NULL DEFAULT 1,
+        client_ts  INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        deleted_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_projects_user    ON projects(user_id);
+      CREATE INDEX IF NOT EXISTS idx_projects_updated ON projects(updated_at);
+
+      CREATE TABLE IF NOT EXISTS project_versions (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT    NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        guide      TEXT    NOT NULL,
+        version    INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_pv_project ON project_versions(project_id);
+    `,
+  },
 ];
 
 function runMigrations(db) {
@@ -353,4 +403,191 @@ export function checkIntegrity() {
 
 export function dbPath() {
   return DB_PATH;
+}
+
+// ── User profile ─────────────────────────────────────────────────────────────
+
+export function getUserProfile(id) {
+  return getDb().prepare(
+    `SELECT id, email, display_name, avatar_url, bio,
+            notification_prefs, privacy_settings, created_at, email_verified_at
+     FROM users WHERE id = ?`
+  ).get(id) ?? null;
+}
+
+export function getUserForAuth(id) {
+  return getDb().prepare('SELECT * FROM users WHERE id = ?').get(id) ?? null;
+}
+
+export function updateUserProfile(id, { display_name, avatar_url, bio }) {
+  getDb().prepare(
+    'UPDATE users SET display_name = ?, avatar_url = ?, bio = ? WHERE id = ?'
+  ).run(display_name ?? null, avatar_url ?? null, bio ?? null, id);
+}
+
+export function updateNotificationPrefs(id, prefs) {
+  getDb().prepare('UPDATE users SET notification_prefs = ? WHERE id = ?')
+    .run(JSON.stringify(prefs), id);
+}
+
+export function updatePrivacySettings(id, settings) {
+  getDb().prepare('UPDATE users SET privacy_settings = ? WHERE id = ?')
+    .run(JSON.stringify(settings), id);
+}
+
+export function updateUserEmail(id, newEmail) {
+  getDb().prepare('UPDATE users SET email = ? WHERE id = ?').run(newEmail.toLowerCase().trim(), id);
+}
+
+// ── Folders ──────────────────────────────────────────────────────────────────
+
+export function createFolder(userId, name) {
+  const id = randomUUID();
+  const now = Date.now();
+  getDb().prepare(
+    'INSERT INTO folders (id, user_id, name, created_at) VALUES (?, ?, ?, ?)'
+  ).run(id, userId, name, now);
+  return { id, user_id: userId, name, created_at: now };
+}
+
+export function getFolders(userId) {
+  return getDb().prepare(
+    'SELECT * FROM folders WHERE user_id = ? ORDER BY name ASC'
+  ).all(userId);
+}
+
+export function getFolderById(id, userId) {
+  return getDb().prepare(
+    'SELECT * FROM folders WHERE id = ? AND user_id = ?'
+  ).get(id, userId) ?? null;
+}
+
+export function updateFolder(id, userId, name) {
+  getDb().prepare('UPDATE folders SET name = ? WHERE id = ? AND user_id = ?').run(name, id, userId);
+}
+
+export function deleteFolder(id, userId) {
+  const db = getDb();
+  db.prepare('UPDATE projects SET folder_id = NULL WHERE folder_id = ? AND user_id = ?').run(id, userId);
+  db.prepare('DELETE FROM folders WHERE id = ? AND user_id = ?').run(id, userId);
+}
+
+// ── Projects ─────────────────────────────────────────────────────────────────
+
+const MAX_VERSIONS = 10;
+
+function parseProjectRow(row) {
+  if (!row) return null;
+  return { ...row, tags: JSON.parse(row.tags || '[]') };
+}
+
+export function createProject(userId, data) {
+  const { id, title, prompt, skill, guide, chat_html, tags, folder_id, client_ts } = data;
+  const now = Date.now();
+  getDb().prepare(`
+    INSERT INTO projects
+      (id, user_id, folder_id, title, prompt, skill, guide, chat_html, tags, client_ts, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, userId, folder_id ?? null,
+    title ?? '', prompt ?? '', skill ?? 'MONKEY',
+    guide ?? '', chat_html ?? '',
+    JSON.stringify(tags ?? []),
+    client_ts ?? now, now, now
+  );
+  return parseProjectRow(getDb().prepare('SELECT * FROM projects WHERE id = ?').get(id));
+}
+
+export function getProject(id, userId) {
+  return parseProjectRow(
+    getDb().prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(id, userId)
+  );
+}
+
+export function getProjects(userId, { q, folder_id, limit = 50, offset = 0, since } = {}) {
+  let sql = 'SELECT * FROM projects WHERE user_id = ? AND deleted_at IS NULL';
+  const params = [userId];
+  if (since != null) { sql += ' AND updated_at > ?'; params.push(since); }
+  if (folder_id !== undefined) { sql += folder_id ? ' AND folder_id = ?' : ' AND folder_id IS NULL'; if (folder_id) params.push(folder_id); }
+  if (q) { sql += ' AND (title LIKE ? OR prompt LIKE ?)'; params.push(`%${q}%`, `%${q}%`); }
+  sql += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
+  params.push(limit, offset);
+  return getDb().prepare(sql).all(...params).map(parseProjectRow);
+}
+
+export function updateProject(id, userId, data) {
+  const existing = getDb().prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(id, userId);
+  if (!existing) return null;
+  const { title, prompt, skill, guide, chat_html, tags, folder_id } = data;
+  const now = Date.now();
+  const db = getDb();
+  const newGuide = guide ?? existing.guide;
+  db.prepare(`
+    UPDATE projects
+    SET title=?, prompt=?, skill=?, guide=?, chat_html=?, tags=?, folder_id=?,
+        version=version+1, updated_at=?
+    WHERE id=? AND user_id=?
+  `).run(
+    title ?? existing.title,
+    prompt ?? existing.prompt,
+    skill ?? existing.skill,
+    newGuide,
+    chat_html ?? existing.chat_html,
+    JSON.stringify(tags ?? JSON.parse(existing.tags || '[]')),
+    folder_id !== undefined ? folder_id : existing.folder_id,
+    now, id, userId
+  );
+  // Archive previous guide as a version
+  if (newGuide !== existing.guide && existing.guide) {
+    db.prepare(
+      'INSERT INTO project_versions (project_id, guide, version, created_at) VALUES (?, ?, ?, ?)'
+    ).run(id, existing.guide, existing.version, now);
+    const old = db.prepare(
+      'SELECT id FROM project_versions WHERE project_id = ? ORDER BY id ASC'
+    ).all(id);
+    if (old.length > MAX_VERSIONS) {
+      const prune = old.slice(0, old.length - MAX_VERSIONS);
+      db.prepare(
+        `DELETE FROM project_versions WHERE id IN (${prune.map(() => '?').join(',')})`
+      ).run(...prune.map(r => r.id));
+    }
+  }
+  return parseProjectRow(db.prepare('SELECT * FROM projects WHERE id = ?').get(id));
+}
+
+export function upsertProject(userId, data) {
+  const existing = getDb().prepare(
+    'SELECT * FROM projects WHERE id = ? AND user_id = ?'
+  ).get(data.id, userId);
+  if (!existing) return createProject(userId, data);
+  const clientUpdated = data.updated_at ?? 0;
+  if (clientUpdated > existing.updated_at) return updateProject(data.id, userId, data);
+  return parseProjectRow(existing);
+}
+
+export function softDeleteProject(id, userId) {
+  getDb().prepare('UPDATE projects SET deleted_at = ? WHERE id = ? AND user_id = ?')
+    .run(Date.now(), id, userId);
+}
+
+export function getProjectVersions(id, userId) {
+  const project = getDb().prepare(
+    'SELECT id FROM projects WHERE id = ? AND user_id = ?'
+  ).get(id, userId);
+  if (!project) return null;
+  return getDb().prepare(
+    'SELECT id, version, created_at FROM project_versions WHERE project_id = ? ORDER BY id DESC'
+  ).all(id);
+}
+
+export function getProjectsSince(userId, since) {
+  return getDb().prepare(
+    'SELECT * FROM projects WHERE user_id = ? AND updated_at > ?  ORDER BY updated_at DESC'
+  ).all(userId, since).map(parseProjectRow);
+}
+
+export function getDeletedSince(userId, since) {
+  return getDb().prepare(
+    'SELECT id, deleted_at FROM projects WHERE user_id = ? AND deleted_at IS NOT NULL AND deleted_at > ?'
+  ).all(userId, since);
 }
