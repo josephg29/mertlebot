@@ -1,6 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { json } from '@sveltejs/kit';
-import { getApiKey } from '$lib/server/config.js';
+import { llmService } from '$lib/server/llm-service.js';
 import { SIM_PROMPT } from '$lib/server/prompts.js';
 import { extractLibraries } from '$lib/server/wokwi.js';
 
@@ -17,23 +16,9 @@ export async function POST({ request }) {
   if (!guide) return json({ error: 'Guide required' }, { status: 400 });
   if (prompt.length > 600) return json({ error: 'Prompt too long (max 600 characters)' }, { status: 400 });
 
-  const apiKey = getApiKey();
-  if (!apiKey) return json({ error: 'API key not configured' }, { status: 401 });
-
   try {
-    const client = new Anthropic({ apiKey });
-
-    const msg = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
-      system: SIM_PROMPT,
-      messages: [{
-        role: 'user',
-        content: `Project: ${prompt}\n\nBuild guide:\n${guide.slice(0, 6000)}`
-      }],
-    });
-
-    const text = msg.content[0].text;
+    const text = await llmService.simulate(prompt, guide, SIM_PROMPT);
+    
     const diagramMatch = text.match(/```json\s*\n([\s\S]*?)```/);
     const sketchMatch = text.match(/```(?:cpp|ino|arduino|c\+\+)\s*\n([\s\S]*?)```/);
 

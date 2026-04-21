@@ -36,10 +36,11 @@
   let hero, heroInput, heroGo, chatInput, sendBtn, charCount,
       statusDot, statusText, statusSkill, outputContext,
       chatLog, buildOutput, emptyState, outputScroll,
-      modalBg, keyInput, saveKeyBtn, keyStatus, modalCloseBtn,
+      modalBg, keyInput, saveKeyBtn, keyStatus, modalCloseBtn, keyHint,
       themeGrid, skillGrid, ageSlider, ageValEl,
       fontSlider, fontValEl,
       histPanel, histList, histClose,
+      providerGrid,
       chatPane, chatToggle, workspace;
 
   /* ── State ── */
@@ -90,10 +91,6 @@
   }
 
   /* ── History ── */
-  function getProjectName(item) {
-    if (item.guide) { const m = item.guide.match(/^# (.+)$/m); if (m) return m[1].trim(); }
-    return item.prompt;
-  }
   function getHist() { try { return JSON.parse(localStorage.getItem('mrt-history') || '[]'); } catch { return []; } }
   function saveHist(h) { localStorage.setItem('mrt-history', JSON.stringify(h.slice(0, 20))); }
   function addHist(prompt, skill, guide) {
@@ -154,8 +151,7 @@
     URL.revokeObjectURL(a.href);
   }
   function downloadGuide(guide, prompt) {
-    const name = getProjectName({ guide, prompt });
-    downloadBlob(guide, (name.slice(0, 40).replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'project') + '.md', 'text/markdown');
+    downloadBlob(guide, (prompt.slice(0, 40).replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'project') + '.md', 'text/markdown');
   }
 
   function showDeleteConfirm(prompt, guide, onDelete, noDownload) {
@@ -229,7 +225,7 @@
       el.tabIndex = 0; el.setAttribute('role', 'button'); el.dataset.ts = item.ts;
       if (selectedTs.has(item.ts)) el.classList.add('selected');
       const d = new Date(item.ts), ts = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><div class="hist-item-body"><div class="hist-item-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</div><div class="hist-item-meta">${esc(item.skill)} &middot; ${esc(ts)}</div></div><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
+      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><div class="hist-item-body"><div class="hist-item-prompt">${esc(item.prompt)}</div><div class="hist-item-meta">${esc(item.skill)} &middot; ${esc(ts)}</div></div><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
       const go = () => {
         if (selectedTs.size > 0) { toggleSelect(item.ts); return; }
         histPanel.classList.remove('open');
@@ -240,7 +236,7 @@
       el.querySelector('.item-cb').addEventListener('click', e => { e.stopPropagation(); toggleSelect(item.ts); });
       el.querySelector('.item-del').addEventListener('click', e => {
         e.stopPropagation();
-        showDeleteConfirm(getProjectName(item), item.guide, () => deleteFromHist(item.ts, el));
+        showDeleteConfirm(item.prompt, item.guide, () => deleteFromHist(item.ts, el));
       });
       histList.appendChild(el);
     });
@@ -261,7 +257,7 @@
       el.tabIndex = 0; el.setAttribute('role', 'button'); el.dataset.ts = item.ts;
       if (selectedTs.has(item.ts)) el.classList.add('selected');
       const ago = timeAgo(item.ts);
-      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><span class="hero-recent-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</span><span class="hero-recent-meta">${esc(ago)}</span><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
+      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><span class="hero-recent-prompt">${esc(item.prompt)}</span><span class="hero-recent-meta">${esc(ago)}</span><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
       const go = () => {
         if (selectedTs.size > 0) { toggleSelect(item.ts); return; }
         if (restoreProject(item)) { dismissHero(); } else { heroInput.value = item.prompt; send(item.prompt, null); }
@@ -271,7 +267,7 @@
       el.querySelector('.item-cb').addEventListener('click', e => { e.stopPropagation(); toggleSelect(item.ts); });
       el.querySelector('.item-del').addEventListener('click', e => {
         e.stopPropagation();
-        showDeleteConfirm(getProjectName(item), item.guide, () => deleteFromHist(item.ts, el));
+        showDeleteConfirm(item.prompt, item.guide, () => deleteFromHist(item.ts, el));
       });
       heroRecent.appendChild(el);
     });
@@ -790,6 +786,28 @@
   }
 
   /* ── Settings ── */
+  function applyProvider(provider) {
+    providerGrid.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.provider === provider));
+    
+    // Update key input placeholder and hint based on provider
+    const providerInfo = {
+      anthropic: {
+        placeholder: 'sk-ant-...',
+        hint: 'get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>'
+      },
+      deepseek: {
+        placeholder: 'sk-...',
+        hint: 'get your key at <a href="https://platform.deepseek.com/api-keys" target="_blank" rel="noopener noreferrer">platform.deepseek.com</a>'
+      }
+    };
+    
+    const info = providerInfo[provider] || providerInfo.anthropic;
+    keyInput.placeholder = info.placeholder;
+    keyHint.innerHTML = info.hint;
+    
+    localStorage.setItem('mrt-provider', provider);
+  }
+
   function applyTheme(n) {
     document.documentElement.setAttribute('data-theme', n);
     localStorage.setItem('mrt-theme', n);
@@ -803,18 +821,54 @@
   }
 
   async function checkKey() {
-    try { const r = await fetch('/api/key'); const { configured } = await r.json(); if (!configured) modalBg.classList.add('open'); } catch {}
+    try { 
+      const r = await fetch('/api/key'); 
+      const { configured, provider } = await r.json(); 
+      if (!configured) {
+        modalBg.classList.add('open');
+      }
+      // Set provider from server if available
+      if (provider) {
+        applyProvider(provider);
+      }
+    } catch {}
   }
   async function saveKey() {
-    const k = keyInput.value.trim(); if (!k) { keyStatus.textContent = 'enter a key'; return; }
-    saveKeyBtn.disabled = true; saveKeyBtn.textContent = '...'; keyStatus.textContent = '';
+    const k = keyInput.value.trim(); 
+    if (!k) { keyStatus.textContent = 'enter a key'; return; }
+    
+    // Get selected provider
+    const activeChip = providerGrid.querySelector('.chip.active');
+    const selectedProvider = activeChip?.dataset.provider || 'anthropic';
+    
+    saveKeyBtn.disabled = true; 
+    saveKeyBtn.textContent = '...'; 
+    keyStatus.textContent = '';
+    
     try {
-      const r = await fetch('/api/key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: k }) });
-      if (!r.ok) { const { error } = await r.json(); throw new Error(error); }
-      keyStatus.style.color = 'var(--accent)'; keyStatus.textContent = 'saved!';
-      setTimeout(() => { keyStatus.textContent = ''; keyStatus.style.color = ''; }, 2000);
-    } catch (e) { keyStatus.textContent = e.message || 'failed'; }
-    finally { saveKeyBtn.disabled = false; saveKeyBtn.textContent = 'SAVE KEY'; }
+      const r = await fetch('/api/key', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ key: k, provider: selectedProvider }) 
+      });
+      
+      if (!r.ok) { 
+        const { error } = await r.json(); 
+        throw new Error(error); 
+      }
+      
+      keyStatus.style.color = 'var(--accent)'; 
+      keyStatus.textContent = 'saved!';
+      setTimeout(() => { 
+        keyStatus.textContent = ''; 
+        keyStatus.style.color = ''; 
+      }, 2000);
+    } catch (e) { 
+      keyStatus.textContent = e.message || 'failed'; 
+    } finally { 
+      saveKeyBtn.disabled = false; 
+      saveKeyBtn.textContent = 'SAVE KEY'; 
+    }
   }
 
   function openSettings() { modalBg.classList.add('open'); keyInput.focus(); }
@@ -839,8 +893,8 @@
     chatLog = gid('chatLog'); buildOutput = gid('buildOutput');
     emptyState = gid('emptyState'); outputScroll = gid('outputScroll');
     modalBg = gid('modalBg'); keyInput = gid('keyInput'); saveKeyBtn = gid('saveKeyBtn');
-    keyStatus = gid('keyStatus'); modalCloseBtn = gid('modalCloseBtn');
-    themeGrid = gid('themeGrid'); skillGrid = gid('skillGrid');
+    keyStatus = gid('keyStatus'); modalCloseBtn = gid('modalCloseBtn'); keyHint = gid('keyHint');
+    themeGrid = gid('themeGrid'); skillGrid = gid('skillGrid'); providerGrid = gid('providerGrid');
     ageSlider = gid('ageSlider'); ageValEl = gid('ageVal');
     fontSlider = gid('fontSlider'); fontValEl = gid('fontVal');
     histPanel = gid('histPanel'); histList = gid('histList'); histClose = gid('histClose');
@@ -890,7 +944,7 @@
       navigator.clipboard.writeText(text).then(() => { const b = gid('btnExport'); b.classList.add('active'); setTimeout(() => b.classList.remove('active'), 1200); }).catch(() => { addMsg('Copy failed — check browser permissions', 'bot'); });
     });
     gid('btnSettings').addEventListener('click', () => { _settingsTrigger = document.activeElement; openSettings(); });
-    gid('btnDelete').addEventListener('click', () => { if (!lastGuide) return; showDeleteConfirm(getProjectName({ guide: lastGuide, prompt: lastPrompt }), lastGuide, () => deleteFromHist(lastTs, null)); });
+    gid('btnDelete').addEventListener('click', () => { if (!lastGuide) return; showDeleteConfirm(lastPrompt, lastGuide, () => deleteFromHist(lastTs, null)); });
 
     /* Delete modal */
     gid('delModalDownload').addEventListener('click', () => { if (_del.guide && _del.prompt) downloadGuide(_del.guide, _del.prompt); });
@@ -951,10 +1005,11 @@
       }
     });
 
-    /* Theme, skill, age, font */
+    /* Theme, skill, age, font, provider */
     themeGrid.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => applyTheme(c.dataset.theme)));
     document.querySelectorAll('.hero-skill').forEach(b => b.addEventListener('click', () => applySkill(Number(b.dataset.skill))));
     skillGrid.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => applySkill(Number(b.dataset.skill))));
+    providerGrid.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => applyProvider(b.dataset.provider)));
     ageSlider.addEventListener('input', () => applyAge(Number(ageSlider.value)));
     fontSlider.addEventListener('input', () => applyFontScale(Number(fontSlider.value)));
     saveKeyBtn.addEventListener('click', saveKey);
@@ -963,15 +1018,36 @@
     /* Init sequence */
     applyTheme(localStorage.getItem('mrt-theme') || 'solder');
     applySkill(Number(localStorage.getItem('mrt-skill')) || 1);
+    applyProvider(localStorage.getItem('mrt-provider') || 'anthropic');
     applyAge(Number(localStorage.getItem('mrt-age')) || 25);
     applyFontScale(Number(localStorage.getItem('mrt-font-scale')) || 100);
     renderHist();
     renderHeroRecent();
     checkKey();
     heroInput.focus();
+    
+    // Handle hash navigation for auth
+    handleHashNavigation();
+    window.addEventListener('hashchange', handleHashNavigation);
   });
 
   /* ── Auth Functions ── */
+  function handleHashNavigation() {
+    const hash = window.location.hash;
+    if (hash === '#login') {
+      showLoginModal = true;
+      showRegisterModal = false;
+      authError = '';
+    } else if (hash === '#register') {
+      showRegisterModal = true;
+      showLoginModal = false;
+      authError = '';
+    } else {
+      showLoginModal = false;
+      showRegisterModal = false;
+    }
+  }
+
   async function handleLogin() {
     if (!loginEmail || !loginPassword) {
       authError = 'Email and password are required';
@@ -987,6 +1063,7 @@
       showLoginModal = false;
       loginEmail = '';
       loginPassword = '';
+      window.location.hash = '';
     } else {
       authError = result.error || 'Login failed';
     }
@@ -1021,6 +1098,7 @@
       registerUsername = '';
       registerPassword = '';
       registerConfirmPassword = '';
+      window.location.hash = '';
     } else {
       authError = result.error || 'Registration failed';
     }
@@ -1030,18 +1108,6 @@
 
   async function handleLogout() {
     await logout();
-  }
-
-  function openLogin() {
-    showLoginModal = true;
-    showRegisterModal = false;
-    authError = '';
-  }
-
-  function openRegister() {
-    showRegisterModal = true;
-    showLoginModal = false;
-    authError = '';
   }
 </script>
 
@@ -1095,25 +1161,6 @@
       <span class="status-dot" id="statusDot"></span>
       <span class="status-label" id="statusText" aria-live="polite">READY</span>
       <span class="status-skill" id="statusSkill"></span>
-      <div class="topbar-sep"></div>
-      
-      <!-- Auth buttons -->
-      {#if $authStore.user}
-        <div class="topbar-user">
-          <span class="topbar-username">{$authStore.user.username}</span>
-          <button type="button" class="topbar-btn" title="Logout" on:click={handleLogout}>
-            <svg viewBox="0 0 24 24"><path d="M10 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-          </button>
-        </div>
-      {:else}
-        <button type="button" class="topbar-btn" title="Login" on:click={openLogin}>
-          <svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-        </button>
-        <button type="button" class="topbar-btn" title="Register" on:click={openRegister}>
-          <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
-        </button>
-      {/if}
-      
       <div class="topbar-sep"></div>
       <button type="button" class="topbar-btn" id="btnSettings" title="Settings">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4,15a1.65,1.65 0 0,0,.33,1.82l.06,.06a2,2 0 1,1-2.83,2.83l-.06-.06a1.65,1.65 0 0,0-1.82-.33 1.65,1.65 0 0,0-1,1.51V21a2,2 0 0,1-4,0v-.09A1.65,1.65 0 0,0 9,19.4a1.65,1.65 0 0,0-1.82,.33l-.06,.06a2,2 0 1,1-2.83-2.83l.06-.06A1.65,1.65 0 0,0 4.68,15a1.65,1.65 0 0,0-1.51-1H3a2,2 0 0,1 0-4h.09A1.65,1.65 0 0,0 4.6,9a1.65,1.65 0 0,0-.33-1.82l-.06-.06a2,2 0 1,1 2.83-2.83l.06,.06A1.65,1.65 0 0,0 9,4.68a1.65,1.65 0 0,0 1-1.51V3a2,2 0 0,1 4,0v.09a1.65,1.65 0 0,0 1,1.51 1.65,1.65 0 0,0 1.82-.33l.06-.06a2,2 0 1,1 2.83,2.83l-.06,.06A1.65,1.65 0 0,0 19.4,9a1.65,1.65 0 0,0 1.51,1H21a2,2 0 0,1 0,4h-.09A1.65,1.65 0 0,0 19.4,15z"/></svg>
@@ -1192,11 +1239,19 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
     <div class="modal-title" id="settingsModalTitle">SETTINGS</div>
     <div class="modal-section">
+      <div class="modal-label">AI Provider</div>
+      <div class="chip-grid" id="providerGrid">
+        <button type="button" class="chip active" data-provider="anthropic">Anthropic Claude</button>
+        <button type="button" class="chip" data-provider="deepseek">DeepSeek</button>
+      </div>
+    </div>
+    <div class="modal-divider"></div>
+    <div class="modal-section">
       <div class="modal-label">API Key</div>
       <div class="modal-input-row"><input class="modal-input" id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off"/></div>
       <button type="button" class="modal-btn" id="saveKeyBtn">SAVE KEY</button>
       <div class="modal-error" id="keyStatus"></div>
-      <div class="modal-hint">get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a></div>
+      <div class="modal-hint" id="keyHint">get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a></div>
     </div>
     <div class="modal-divider"></div>
     <div class="modal-section">

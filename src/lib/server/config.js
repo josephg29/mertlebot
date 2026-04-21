@@ -13,9 +13,18 @@ export function loadConfig() {
 }
 
 export function saveConfig(cfg) {
-  writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  try {
+    writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  } catch (err) {
+    console.error('Failed to save config:', err.message);
+    throw new Error('Could not save configuration — check file permissions');
+  }
 }
 
 export function getApiKey() {
-  return loadConfig().apiKey || process.env.ANTHROPIC_API_KEY || null;
+  return loadConfig().apiKey || process.env.ANTHROPIC_API_KEY || process.env.DEEPSEEK_API_KEY || null;
+}
+
+export function getProvider() {
+  return loadConfig().provider || 'anthropic';
 }
