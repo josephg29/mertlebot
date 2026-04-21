@@ -2247,6 +2247,79 @@
     heroInput.focus();
 
   });
+
+  /* ── Auth Functions ── */
+  async function handleLogin() {
+    if (!loginEmail || !loginPassword) {
+      authError = 'Email and password are required';
+      return;
+    }
+
+    authLoading = true;
+    authError = '';
+
+    const result = await login(loginEmail, loginPassword);
+    
+    if (result.success) {
+      showLoginModal = false;
+      loginEmail = '';
+      loginPassword = '';
+    } else {
+      authError = result.error || 'Login failed';
+    }
+
+    authLoading = false;
+  }
+
+  async function handleRegister() {
+    if (!registerEmail || !registerUsername || !registerPassword || !registerConfirmPassword) {
+      authError = 'All fields are required';
+      return;
+    }
+
+    if (registerPassword !== registerConfirmPassword) {
+      authError = 'Passwords do not match';
+      return;
+    }
+
+    if (registerPassword.length < 8) {
+      authError = 'Password must be at least 8 characters';
+      return;
+    }
+
+    authLoading = true;
+    authError = '';
+
+    const result = await register(registerEmail, registerUsername, registerPassword);
+    
+    if (result.success) {
+      showRegisterModal = false;
+      registerEmail = '';
+      registerUsername = '';
+      registerPassword = '';
+      registerConfirmPassword = '';
+    } else {
+      authError = result.error || 'Registration failed';
+    }
+
+    authLoading = false;
+  }
+
+  async function handleLogout() {
+    await logout();
+  }
+
+  function openLogin() {
+    showLoginModal = true;
+    showRegisterModal = false;
+    authError = '';
+  }
+
+  function openRegister() {
+    showRegisterModal = true;
+    showLoginModal = false;
+    authError = '';
+  }
 </script>
 
 <!-- ═══ HERO ═══ -->
@@ -2325,6 +2398,25 @@
       <span class="status-dot" id="statusDot"></span>
       <span class="status-label" id="statusText" aria-live="polite">READY</span>
       <span class="status-skill" id="statusSkill"></span>
+      <div class="topbar-sep"></div>
+      
+      <!-- Auth buttons -->
+      {#if $authStore.user}
+        <div class="topbar-user">
+          <span class="topbar-username">{$authStore.user.username}</span>
+          <button type="button" class="topbar-btn" title="Logout" on:click={handleLogout}>
+            <svg viewBox="0 0 24 24"><path d="M10 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </button>
+        </div>
+      {:else}
+        <button type="button" class="topbar-btn" title="Login" on:click={openLogin}>
+          <svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        </button>
+        <button type="button" class="topbar-btn" title="Register" on:click={openRegister}>
+          <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
+        </button>
+      {/if}
+      
       <div class="topbar-sep"></div>
       <button type="button" class="topbar-btn" id="btnSettings" title="Settings">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4,15a1.65,1.65 0 0,0,.33,1.82l.06,.06a2,2 0 1,1-2.83,2.83l-.06-.06a1.65,1.65 0 0,0-1.82-.33 1.65,1.65 0 0,0-1,1.51V21a2,2 0 0,1-4,0v-.09A1.65,1.65 0 0,0 9,19.4a1.65,1.65 0 0,0-1.82,.33l-.06,.06a2,2 0 1,1-2.83-2.83l.06-.06A1.65,1.65 0 0,0 4.68,15a1.65,1.65 0 0,0-1.51-1H3a2,2 0 0,1 0-4h.09A1.65,1.65 0 0,0 4.6,9a1.65,1.65 0 0,0-.33-1.82l-.06-.06a2,2 0 1,1 2.83-2.83l.06,.06A1.65,1.65 0 0,0 9,4.68a1.65,1.65 0 0,0 1-1.51V3a2,2 0 0,1 4,0v.09a1.65,1.65 0 0,0 1,1.51 1.65,1.65 0 0,0 1.82-.33l.06-.06a2,2 0 1,1 2.83,2.83l-.06,.06A1.65,1.65 0 0,0 19.4,9a1.65,1.65 0 0,0 1.51,1H21a2,2 0 0,1 0,4h-.09A1.65,1.65 0 0,0 19.4,15z"/></svg>
@@ -2538,3 +2630,56 @@
     <div class="clarify-inner" id="clarifyInner"></div>
   </div>
 </div>
+
+<!-- ═══ AUTH MODALS ═══ -->
+{#if showLoginModal}
+<div class="modal-bg" id="loginModalBg">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
+    <div class="modal-title" id="loginModalTitle">LOGIN</div>
+    <div class="modal-section">
+      {#if authError}
+        <div class="modal-error">{authError}</div>
+      {/if}
+      <div class="modal-label">Email</div>
+      <input class="modal-input" type="email" placeholder="your@email.com" bind:value={loginEmail} disabled={authLoading}/>
+      <div class="modal-label">Password</div>
+      <input class="modal-input" type="password" placeholder="••••••••" bind:value={loginPassword} disabled={authLoading}/>
+      <button type="button" class="modal-btn" on:click={handleLogin} disabled={authLoading}>
+        {#if authLoading}LOGGING IN...{:else}LOGIN{/if}
+      </button>
+      <div class="modal-hint">
+        Don't have an account? <a href="javascript:void(0)" on:click={() => { showLoginModal = false; showRegisterModal = true; }}>Register</a>
+      </div>
+    </div>
+    <button type="button" class="modal-close-btn" on:click={() => showLoginModal = false}>CLOSE</button>
+  </div>
+</div>
+{/if}
+
+{#if showRegisterModal}
+<div class="modal-bg" id="registerModalBg">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="registerModalTitle">
+    <div class="modal-title" id="registerModalTitle">REGISTER</div>
+    <div class="modal-section">
+      {#if authError}
+        <div class="modal-error">{authError}</div>
+      {/if}
+      <div class="modal-label">Email</div>
+      <input class="modal-input" type="email" placeholder="your@email.com" bind:value={registerEmail} disabled={authLoading}/>
+      <div class="modal-label">Username</div>
+      <input class="modal-input" type="text" placeholder="maker123" bind:value={registerUsername} disabled={authLoading}/>
+      <div class="modal-label">Password</div>
+      <input class="modal-input" type="password" placeholder="••••••••" bind:value={registerPassword} disabled={authLoading}/>
+      <div class="modal-label">Confirm Password</div>
+      <input class="modal-input" type="password" placeholder="••••••••" bind:value={registerConfirmPassword} disabled={authLoading}/>
+      <button type="button" class="modal-btn" on:click={handleRegister} disabled={authLoading}>
+        {#if authLoading}CREATING ACCOUNT...{:else}REGISTER{/if}
+      </button>
+      <div class="modal-hint">
+        Already have an account? <a href="javascript:void(0)" on:click={() => { showRegisterModal = false; showLoginModal = true; }}>Login</a>
+      </div>
+    </div>
+    <button type="button" class="modal-close-btn" on:click={() => showRegisterModal = false}>CLOSE</button>
+  </div>
+</div>
+{/if}

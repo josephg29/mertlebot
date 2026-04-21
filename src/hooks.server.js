@@ -9,31 +9,73 @@ const PROTECTED_PREFIXES = [
 // Routes that are part of auth itself — never apply session guard here
 const AUTH_PREFIXES = ['/api/auth/'];
 
-/* ── In-memory rate limiter (30 req / 60s per IP) ── */
+/* ── In-memory rate limiter ── */
 const rateLimitMap = new Map();
 const WINDOW_MS = 60 * 1000;
-const MAX_REQUESTS = 30;
 
-function checkRateLimit(ip) {
+// Different limits for different endpoints
+const RATE_LIMITS = {
+  'generate': { limit: 20, burst: 5 },  // Most expensive
+  'clarify': { limit: 30, burst: 10 },  // Cheaper
+  'simulate': { limit: 10, burst: 3 },  // External API dependency
+  'key': { limit: 5, burst: 2 },        // Admin operations
+  'auth': { limit: 30, burst: 10 },     // Auth endpoints
+  'default': { limit: 30, burst: 10 }   // Everything else
+};
+
+function getEndpointType(path) {
+  if (path.includes('/api/generate')) return 'generate';
+  if (path.includes('/api/clarify')) return 'clarify';
+  if (path.includes('/api/simulate')) return 'simulate';
+  if (path.includes('/api/key')) return 'key';
+  if (path.includes('/api/auth/')) return 'auth';
+  return 'default';
+}
+
+function checkRateLimit(identifier, endpointType) {
   const now = Date.now();
-  let entry = rateLimitMap.get(ip);
+  const limits = RATE_LIMITS[endpointType] || RATE_LIMITS.default;
+
+  let entry = rateLimitMap.get(identifier);
   if (!entry || now > entry.resetAt) {
-    entry = { count: 0, resetAt: now + WINDOW_MS };
+    entry = {
+      count: 0,
+      burstCount: 0,
+      resetAt: now + WINDOW_MS,
+      burstResetAt: now + 10000 // 10 second burst window
+    };
   }
+
+  // Check burst limit first
+  if (now > entry.burstResetAt) {
+    entry.burstCount = 0;
+    entry.burstResetAt = now + 10000;
+  }
+
   entry.count++;
-  rateLimitMap.set(ip, entry);
+  entry.burstCount++;
+
+  rateLimitMap.set(identifier, entry);
+
+  const burstOk = entry.burstCount <= limits.burst;
+  const windowOk = entry.count <= limits.limit;
+
   return {
-    ok: entry.count <= MAX_REQUESTS,
-    remaining: Math.max(0, MAX_REQUESTS - entry.count),
+    ok: burstOk && windowOk,
+    remaining: Math.max(0, limits.limit - entry.count),
     reset: Math.ceil(entry.resetAt / 1000),
+    burstRemaining: Math.max(0, limits.burst - entry.burstCount),
+    burstReset: Math.ceil(entry.burstResetAt / 1000)
   };
 }
 
 // Clean up stale entries every 5 minutes
 setInterval(() => {
   const now = Date.now();
-  for (const [ip, entry] of rateLimitMap) {
-    if (now > entry.resetAt) rateLimitMap.delete(ip);
+  for (const [identifier, entry] of rateLimitMap) {
+    if (now > entry.resetAt && now > entry.burstResetAt) {
+      rateLimitMap.delete(identifier);
+    }
   }
 }, 5 * 60 * 1000);
 
@@ -100,17 +142,27 @@ export async function handle({ event, resolve }) {
       });
     }
 
-    // Rate limiting
-    const ip = event.getClientAddress();
-    const limit = checkRateLimit(ip);
+    // Rate limiting — use session user ID for authenticated requests, IP for anonymous
+    const endpointType = getEndpointType(path);
+    const userId = event.locals.session?.user_id;
+    const identifier = userId
+      ? `user:${userId}:${endpointType}`
+      : `ip:${event.getClientAddress()}:${endpointType}`;
+
+    const limit = checkRateLimit(identifier, endpointType);
     if (!limit.ok) {
-      return new Response(JSON.stringify({ error: 'Too many requests — please wait a moment' }), {
+      return new Response(JSON.stringify({
+        error: 'Too many requests — please wait a moment',
+        retryAfter: Math.max(limit.reset - Math.ceil(Date.now() / 1000), limit.burstReset - Math.ceil(Date.now() / 1000))
+      }), {
         status: 429,
         headers: {
           'Content-Type': 'application/json',
-          'RateLimit-Limit': String(MAX_REQUESTS),
+          'RateLimit-Limit': String(RATE_LIMITS[endpointType]?.limit || 30),
           'RateLimit-Remaining': '0',
           'RateLimit-Reset': String(limit.reset),
+          'RateLimit-Burst-Remaining': '0',
+          'RateLimit-Burst-Reset': String(limit.burstReset)
         }
       });
     }
