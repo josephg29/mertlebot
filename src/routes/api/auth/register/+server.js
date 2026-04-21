@@ -3,8 +3,10 @@ import {
   validateEmail, validatePassword, hashPassword,
   generateSessionToken, sessionExpiresAt, deriveCsrfToken,
   SESSION_COOKIE, sessionCookieOptions,
+  generateVerificationToken, verificationTokenExpiresAt, hashToken,
 } from '$lib/server/auth.js';
-import { getUserByEmail, createUser, createSession, logAuthEvent } from '$lib/server/db.js';
+import { getUserByEmail, createUser, createSession, logAuthEvent, createEmailVerificationToken } from '$lib/server/db.js';
+import { sendVerificationEmail } from '$lib/server/email.js';
 
 export async function POST({ request, cookies }) {
   const body = await request.json().catch(() => null);
@@ -34,8 +36,13 @@ export async function POST({ request, cookies }) {
   createSession(token, user.id, sessionExpiresAt(), ip, ua);
   logAuthEvent('register', { userId: user.id, email: user.email, ip, userAgent: ua });
 
+  const verifyRaw = generateVerificationToken();
+  createEmailVerificationToken(hashToken(verifyRaw), user.id, verificationTokenExpiresAt());
+  const verifyUrl = `${new URL(request.url).origin}/auth?verify=${verifyRaw}`;
+  sendVerificationEmail(user.email, verifyUrl);
+
   const secure = request.url.startsWith('https');
   cookies.set(SESSION_COOKIE, token, sessionCookieOptions(secure));
 
-  return json({ ok: true, user: { id: user.id, email: user.email }, csrfToken: deriveCsrfToken(token) });
+  return json({ ok: true, user: { id: user.id, email: user.email }, csrfToken: deriveCsrfToken(token), needsVerification: true });
 }

@@ -12,5 +12,5 @@ export async function GET({ cookies }) {
   const user = getUserById(session.user_id);
   if (!user) return json({ authenticated: false });
 
-  return json({ authenticated: true, user, csrfToken: deriveCsrfToken(token) });
+  return json({ authenticated: true, user, csrfToken: deriveCsrfToken(token), emailVerified: !!user.email_verified_at });
 }
