@@ -1,3 +1,11 @@
+import { SESSION_COOKIE, deriveCsrfToken } from '$lib/server/auth.js';
+import { getSession } from '$lib/server/db.js';
+
+// Routes that require an authenticated session
+const PROTECTED_PREFIXES = ['/api/generate', '/api/clarify', '/api/simulate', '/api/key'];
+// Routes that are part of auth itself — never apply session guard here
+const AUTH_PREFIXES = ['/api/auth/'];
+
 /* ── In-memory rate limiter (30 req / 60s per IP) ── */
 const rateLimitMap = new Map();
 const WINDOW_MS = 60 * 1000;
@@ -28,6 +36,44 @@ setInterval(() => {
 
 export async function handle({ event, resolve }) {
   const path = event.url.pathname;
+
+  // ── Session guard on protected API routes ────────────────────────────────
+  const isProtected = PROTECTED_PREFIXES.some(p => path.startsWith(p));
+  const isAuthRoute  = AUTH_PREFIXES.some(p => path.startsWith(p));
+
+  if (isProtected && !isAuthRoute) {
+    const token = event.cookies.get(SESSION_COOKIE);
+    if (!token) {
+      return new Response(JSON.stringify({ error: 'Authentication required' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const session = getSession(token);
+    if (!session) {
+      event.cookies.delete(SESSION_COOKIE, { path: '/' });
+      return new Response(JSON.stringify({ error: 'Session expired — please log in again' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // CSRF check for mutating requests
+    const method = event.request.method;
+    if (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') {
+      const csrfHeader = event.request.headers.get('x-csrf-token');
+      const expected = deriveCsrfToken(token);
+      if (csrfHeader !== expected) {
+        return new Response(JSON.stringify({ error: 'Invalid CSRF token' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    event.locals.session = session;
+  }
 
   if (path.startsWith('/api/')) {
     // Same-origin CORS check

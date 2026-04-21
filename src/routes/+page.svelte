@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import WiringCanvas from '$lib/wiregen/WiringCanvas.svelte';
   import InstructionBook from '$lib/InstructionBook.svelte';
   import { mount, unmount } from 'svelte';
@@ -97,6 +98,16 @@
 
   /* ── Helper ── */
   const gid = id => document.getElementById(id);
+
+  /* ── Auth ── */
+  let csrfToken = '';
+  function getCsrfHeaders() { return csrfToken ? { 'X-CSRF-Token': csrfToken } : {}; }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    sessionStorage.removeItem('csrfToken');
+    goto('/auth');
+  }
 
   /* ── DOM refs (set in onMount) ── */
   let hero, heroInput, heroGo, chatInput, sendBtn, charCount,
@@ -1555,7 +1566,7 @@
       controller = new AbortController();
       const res = await fetch('/api/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
         body: JSON.stringify({ prompt: apiPrompt, skill: getSkill(), age: getAge(), clarifications }),
         signal: controller.signal
       });
@@ -1653,7 +1664,7 @@
         const ac = new AbortController();
         const tid = setTimeout(() => ac.abort(), 4000);
         const r = await fetch('/api/clarify', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
           body: JSON.stringify({ prompt: text }), signal: ac.signal
         });
         clearTimeout(tid);
@@ -1765,7 +1776,7 @@
       buildOutput.appendChild(progressUi.card);
       scrollOut();
       try {
-        const res = await fetch('/api/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: lastPrompt, guide: lastGuide }) });
+        const res = await fetch('/api/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() }, body: JSON.stringify({ prompt: lastPrompt, guide: lastGuide }) });
         if (!res.ok) { const { error } = await res.json(); throw new Error(error); }
 
         let result = null;
@@ -1829,7 +1840,7 @@
     const k = keyInput.value.trim(); if (!k) { keyStatus.textContent = 'enter a key'; return; }
     saveKeyBtn.disabled = true; saveKeyBtn.textContent = '...'; keyStatus.textContent = '';
     try {
-      const r = await fetch('/api/key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: k }) });
+      const r = await fetch('/api/key', { method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() }, body: JSON.stringify({ key: k }) });
       if (!r.ok) { const { error } = await r.json(); throw new Error(error); }
       keyStatus.style.color = 'var(--accent)'; keyStatus.textContent = 'saved!';
       setTimeout(() => { keyStatus.textContent = ''; keyStatus.style.color = ''; }, 2000);
@@ -1851,6 +1862,15 @@
   }
 
   onMount(() => {
+    /* ── Auth: verify session, redirect to /auth if not logged in ── */
+    fetch('/api/auth/session')
+      .then(r => r.json())
+      .then(d => {
+        if (!d.authenticated) { goto('/auth'); return; }
+        csrfToken = d.csrfToken ?? sessionStorage.getItem('csrfToken') ?? '';
+      })
+      .catch(() => goto('/auth'));
+
     /* Set DOM refs */
     hero = gid('hero'); heroInput = gid('heroInput'); heroGo = gid('heroGo');
     chatInput = gid('chatInput'); sendBtn = gid('sendBtn'); charCount = gid('charCount');
@@ -1938,6 +1958,7 @@
       }
     });
     gid('btnSettings').addEventListener('click', () => { _settingsTrigger = document.activeElement; openSettings(); });
+    gid('btnLogout').addEventListener('click', logout);
     gid('btnDelete').addEventListener('click', () => { if (!lastGuide) return; showDeleteConfirm(getProjectName({ guide: lastGuide, prompt: lastPrompt }), lastGuide, () => deleteFromHist(lastTs, null)); });
 
     /* Delete modal */
@@ -2100,6 +2121,9 @@
       <div class="topbar-sep"></div>
       <button type="button" class="topbar-btn" id="btnSettings" title="Settings">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4,15a1.65,1.65 0 0,0,.33,1.82l.06,.06a2,2 0 1,1-2.83,2.83l-.06-.06a1.65,1.65 0 0,0-1.82-.33 1.65,1.65 0 0,0-1,1.51V21a2,2 0 0,1-4,0v-.09A1.65,1.65 0 0,0 9,19.4a1.65,1.65 0 0,0-1.82,.33l-.06,.06a2,2 0 1,1-2.83-2.83l.06-.06A1.65,1.65 0 0,0 4.68,15a1.65,1.65 0 0,0-1.51-1H3a2,2 0 0,1 0-4h.09A1.65,1.65 0 0,0 4.6,9a1.65,1.65 0 0,0-.33-1.82l-.06-.06a2,2 0 1,1 2.83-2.83l.06,.06A1.65,1.65 0 0,0 9,4.68a1.65,1.65 0 0,0 1-1.51V3a2,2 0 0,1 4,0v.09a1.65,1.65 0 0,0 1,1.51 1.65,1.65 0 0,0 1.82-.33l.06-.06a2,2 0 1,1 2.83,2.83l-.06,.06A1.65,1.65 0 0,0 19.4,9a1.65,1.65 0 0,0 1.51,1H21a2,2 0 0,1 0,4h-.09A1.65,1.65 0 0,0 19.4,15z"/></svg>
+      </button>
+      <button type="button" class="topbar-btn" id="btnLogout" title="Sign out">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
       </button>
     </div>
 
