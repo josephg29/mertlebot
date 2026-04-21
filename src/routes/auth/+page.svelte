@@ -190,20 +190,11 @@
       {/if}
 
     {:else if mode === 'login' || mode === 'register'}
-      <div class="tabs">
-        <button class="tab" class:active={mode === 'login'} onclick={() => switchMode('login')}>
-          Sign in
-        </button>
-        <button class="tab" class:active={mode === 'register'} onclick={() => switchMode('register')}>
-          Create account
-        </button>
-      </div>
-
-      {#if info}
-        <div class="info" role="status">{info}</div>
-      {/if}
-
       {#if !emailVerified}
+        {#if info}
+          <div class="info" role="status">{info}</div>
+        {/if}
+
         <div class="verify-banner">
           <p>Your email is not verified. Check your inbox for a verification link.</p>
           {#if resendInfo}
@@ -215,6 +206,19 @@
           {/if}
         </div>
       {:else}
+        <div class="tabs">
+          <button class="tab" class:active={mode === 'login'} onclick={() => switchMode('login')}>
+            Sign in
+          </button>
+          <button class="tab" class:active={mode === 'register'} onclick={() => switchMode('register')}>
+            Create account
+          </button>
+        </div>
+
+        {#if info}
+          <div class="info" role="status">{info}</div>
+        {/if}
+
         <form onsubmit={(e) => { e.preventDefault(); submit(); }}>
           <div class="field">
             <label for="email">Email</label>
