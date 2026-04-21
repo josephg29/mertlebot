@@ -1,5 +1,5 @@
 import { SESSION_COOKIE, deriveCsrfToken } from '$lib/server/auth.js';
-import { getSession } from '$lib/server/db.js';
+import { getSession, getUserById } from '$lib/server/db.js';
 
 // Routes that require an authenticated session
 const PROTECTED_PREFIXES = ['/api/generate', '/api/clarify', '/api/simulate', '/api/key'];
@@ -73,6 +73,17 @@ export async function handle({ event, resolve }) {
     }
 
     event.locals.session = session;
+
+    // Optional verification gate — set REQUIRE_EMAIL_VERIFICATION=true to enable
+    if (process.env.REQUIRE_EMAIL_VERIFICATION === 'true') {
+      const user = getUserById(session.user_id);
+      if (!user?.email_verified_at) {
+        return new Response(JSON.stringify({ error: 'Please verify your email address to use this feature' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    }
   }
 
   if (path.startsWith('/api/')) {
