@@ -76,6 +76,39 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    name: '003_password_reset',
+    sql: `
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        token_hash  TEXT    PRIMARY KEY,
+        user_id     TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at  INTEGER NOT NULL,
+        used_at     INTEGER,
+        created_at  INTEGER NOT NULL,
+        ip          TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_prt_user ON password_reset_tokens(user_id);
+      CREATE INDEX IF NOT EXISTS idx_prt_exp  ON password_reset_tokens(expires_at);
+    `,
+  },
+  {
+    name: '004_email_verification',
+    sql: null,
+    migrate(db) {
+      db.exec(`ALTER TABLE users ADD COLUMN email_verified_at INTEGER`);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS email_verification_tokens (
+          token_hash  TEXT    PRIMARY KEY,
+          user_id     TEXT    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          expires_at  INTEGER NOT NULL,
+          used_at     INTEGER,
+          created_at  INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_evt_user ON email_verification_tokens(user_id);
+        CREATE INDEX IF NOT EXISTS idx_evt_exp  ON email_verification_tokens(expires_at);
+      `);
+    },
+  },
 ];
 
 function runMigrations(db) {
@@ -94,7 +127,11 @@ function runMigrations(db) {
   for (const m of MIGRATIONS) {
     if (applied.has(m.name)) continue;
     db.transaction(() => {
-      db.exec(m.sql);
+      if (m.migrate) {
+        m.migrate(db);
+      } else {
+        db.exec(m.sql);
+      }
       db.prepare("INSERT INTO _migrations (name) VALUES (?)").run(m.name);
     })();
   }
@@ -223,7 +260,7 @@ export function getUserByEmail(email) {
 }
 
 export function getUserById(id) {
-  return getDb().prepare('SELECT id, email, created_at FROM users WHERE id = ?').get(id) ?? null;
+  return getDb().prepare('SELECT id, email, created_at, email_verified_at FROM users WHERE id = ?').get(id) ?? null;
 }
 
 export function updateFailedAttempts(userId, attempts, lockedUntil = 0) {
@@ -251,6 +288,56 @@ export function deleteSession(token) {
 export function logAuthEvent(event, { userId = null, email = null, ip = null, userAgent = null } = {}) {
   getDb().prepare('INSERT INTO auth_log (event, user_id, email, ip, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(event, userId, email, ip, userAgent, Date.now());
+}
+
+// ── Password reset ──────────────────────────────────────────────────────────
+
+export function createPasswordResetToken(tokenHash, userId, expiresAt, ip = null) {
+  const db = getDb();
+  db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?').run(userId);
+  db.prepare('INSERT INTO password_reset_tokens (token_hash, user_id, expires_at, created_at, ip) VALUES (?, ?, ?, ?, ?)')
+    .run(tokenHash, userId, expiresAt, Date.now(), ip);
+}
+
+export function getPasswordResetToken(tokenHash) {
+  return getDb()
+    .prepare('SELECT * FROM password_reset_tokens WHERE token_hash = ? AND expires_at > ? AND used_at IS NULL')
+    .get(tokenHash, Date.now()) ?? null;
+}
+
+export function consumePasswordResetToken(tokenHash) {
+  getDb().prepare('UPDATE password_reset_tokens SET used_at = ? WHERE token_hash = ?')
+    .run(Date.now(), tokenHash);
+}
+
+export function updateUserPassword(userId, passwordHash) {
+  getDb().prepare('UPDATE users SET password_hash = ?, failed_attempts = 0, locked_until = 0 WHERE id = ?')
+    .run(passwordHash, userId);
+}
+
+// ── Email verification ──────────────────────────────────────────────────────
+
+export function createEmailVerificationToken(tokenHash, userId, expiresAt) {
+  const db = getDb();
+  db.prepare('DELETE FROM email_verification_tokens WHERE user_id = ?').run(userId);
+  db.prepare('INSERT INTO email_verification_tokens (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
+    .run(tokenHash, userId, expiresAt, Date.now());
+}
+
+export function getEmailVerificationToken(tokenHash) {
+  return getDb()
+    .prepare('SELECT * FROM email_verification_tokens WHERE token_hash = ? AND expires_at > ? AND used_at IS NULL')
+    .get(tokenHash, Date.now()) ?? null;
+}
+
+export function consumeEmailVerificationToken(tokenHash) {
+  getDb().prepare('UPDATE email_verification_tokens SET used_at = ? WHERE token_hash = ?')
+    .run(Date.now(), tokenHash);
+}
+
+export function markEmailVerified(userId) {
+  getDb().prepare('UPDATE users SET email_verified_at = ? WHERE id = ?')
+    .run(Date.now(), userId);
 }
 
 // ── Health ──────────────────────────────────────────────────────────────────
