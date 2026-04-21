@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { randomBytes, createHmac } from 'crypto';
+import { randomBytes, createHmac, createHash } from 'crypto';
 
 const SALT_ROUNDS = 12;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -72,3 +72,26 @@ export function validatePassword(password) {
 
 // Dummy hash used for constant-time comparison when user not found
 export const DUMMY_HASH = '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewYpfNJ4tbGFW7ya';
+
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+export function generateResetToken() {
+  return randomBytes(32).toString('hex');
+}
+
+export function hashToken(token) {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+export function resetTokenExpiresAt() {
+  return Date.now() + RESET_TOKEN_TTL_MS;
+}
+
+export function generateVerificationToken() {
+  return randomBytes(32).toString('hex');
+}
+
+export function verificationTokenExpiresAt() {
+  return Date.now() + VERIFICATION_TOKEN_TTL_MS;
+}
