@@ -6,7 +6,7 @@ import {
   isAccountLocked, shouldLock, lockoutExpiry,
 } from '$lib/server/auth.js';
 import {
-  getUserByEmail, createSession, updateFailedAttempts, resetFailedAttempts, logAuthEvent,
+  getUserByEmail, createSession, updateFailedAttempts, resetFailedAttempts, logAuthEvent, getUserById,
 } from '$lib/server/db.js';
 
 export async function POST({ request, cookies }) {
@@ -58,8 +58,10 @@ export async function POST({ request, cookies }) {
   createSession(token, user.id, sessionExpiresAt(), ip, ua);
   logAuthEvent('login', { userId: user.id, email, ip, userAgent: ua });
 
+  const fullUser = getUserById(user.id);
+
   const secure = request.url.startsWith('https');
   cookies.set(SESSION_COOKIE, token, sessionCookieOptions(secure));
 
-  return json({ ok: true, user: { id: user.id, email: user.email }, csrfToken: deriveCsrfToken(token) });
+  return json({ ok: true, user: { id: user.id, email: user.email }, csrfToken: deriveCsrfToken(token), emailVerified: !!fullUser?.email_verified_at });
 }

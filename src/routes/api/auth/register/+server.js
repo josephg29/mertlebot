@@ -8,7 +8,7 @@ import {
 import { getUserByEmail, createUser, createSession, logAuthEvent, createEmailVerificationToken } from '$lib/server/db.js';
 import { sendVerificationEmail } from '$lib/server/email.js';
 
-export async function POST({ request, cookies }) {
+export async function POST({ request, cookies, url }) {
   const body = await request.json().catch(() => null);
   if (!body) return json({ error: 'Invalid request body' }, { status: 400 });
 
@@ -38,7 +38,7 @@ export async function POST({ request, cookies }) {
 
   const verifyRaw = generateVerificationToken();
   createEmailVerificationToken(hashToken(verifyRaw), user.id, verificationTokenExpiresAt());
-  const verifyUrl = `${new URL(request.url).origin}/auth?verify=${verifyRaw}`;
+  const verifyUrl = `${url.origin}/auth?verify=${verifyRaw}`;
   sendVerificationEmail(user.email, verifyUrl);
 
   const secure = request.url.startsWith('https');
