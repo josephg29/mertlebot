@@ -242,59 +242,6 @@
     margin-right: auto;
   }
   
-  .billing-toggle {
-    display: flex;
-    gap: 12px;
-    max-width: 400px;
-    margin: 0 auto;
-  }
-  
-  .toggle-btn {
-    flex: 1;
-    padding: 14px;
-    background: var(--surface2);
-    border: 3px solid var(--border-col);
-    color: var(--text-muted);
-    font-family: 'Press Start 2P', monospace;
-    font-size: 9px;
-    letter-spacing: 1px;
-    cursor: pointer;
-    box-shadow: 4px 4px 0 rgba(0,0,0,0.4);
-    transition: transform 0.2s var(--spring), box-shadow 0.2s var(--spring), 
-                background 0.2s, color 0.2s, border-color 0.2s;
-    -webkit-font-smoothing: none;
-  }
-  
-  .toggle-btn:hover {
-    color: var(--primary);
-    border-color: var(--primary);
-    transform: translateY(-2px);
-    box-shadow: 4px 6px 0 rgba(0,0,0,0.4);
-  }
-  
-  .toggle-btn.active {
-    background: var(--primary);
-    border-color: var(--primary-dark);
-    color: var(--trunk);
-    box-shadow: 4px 4px 0 var(--primary-dark);
-  }
-  
-  .toggle-btn.active:hover {
-    transform: none;
-    box-shadow: 4px 4px 0 var(--primary-dark);
-  }
-  
-  .save-badge {
-    display: inline-block;
-    background: var(--cta);
-    color: #fff;
-    font-size: 7px;
-    padding: 2px 6px;
-    margin-left: 8px;
-    border: 2px solid var(--cta-dark);
-    box-shadow: 2px 2px 0 rgba(0,0,0,0.3);
-  }
-  
   /* Section Container */
   .section-container {
     max-width: 1200px;
@@ -671,10 +618,6 @@
     
     .hero-title {
       font-size: 24px;
-    }
-    
-    .billing-toggle {
-      flex-direction: column;
     }
     
     .faq-grid {

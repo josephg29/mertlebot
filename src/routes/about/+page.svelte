@@ -379,18 +379,6 @@
     border-color: var(--primary);
   }
 
-  .team-card.cta {
-    border-color: var(--cta);
-  }
-
-  .team-card.link {
-    border-color: var(--link);
-  }
-
-  .team-card.danger {
-    border-color: var(--danger);
-  }
-
   .team-avatar {
     display: flex;
     align-items: center;

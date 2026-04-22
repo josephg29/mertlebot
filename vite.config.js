@@ -12,6 +12,11 @@ export default defineConfig({
   ssr: {
     external: ['better-sqlite3']
   },
+  build: {
+    rollupOptions: {
+      external: ['nodemailer']
+    }
+  },
   test: {
     include: ['src/tests/**/*.test.{js,ts}'],
     environment: 'node',

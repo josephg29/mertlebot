@@ -400,18 +400,18 @@
     width: 100%;
     max-width: 400px;
     background: var(--surface);
-    border: 1px solid var(--border-col);
-    border-radius: 12px;
+    border: 4px solid var(--primary);
+    border-radius: 0;
     padding: 2rem;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    box-shadow: 8px 8px 0 rgba(0,0,0,0.55);
   }
 
   .logo {
     text-align: center;
     margin-bottom: 0.25rem;
-    font-size: 2rem;
-    font-weight: 800;
-    letter-spacing: -0.02em;
+    font-family: var(--font-pixel);
+    font-size: 1.1rem;
+    letter-spacing: 0.04em;
   }
   .logo-m   { color: var(--primary); }
   .logo-text{ color: var(--text); }
@@ -420,44 +420,50 @@
   .subtitle {
     text-align: center;
     color: var(--text-muted);
-    font-size: 0.85rem;
+    font-size: 0.7rem;
     margin: 0 0 1.5rem;
+    font-family: var(--font-pixel);
   }
 
   .form-heading {
-    font-size: 1.1rem;
-    font-weight: 700;
+    font-family: var(--font-pixel);
+    font-size: 0.75rem;
     margin: 0 0 0.25rem;
     color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
   .form-desc {
     color: var(--text-muted);
-    font-size: 0.875rem;
+    font-size: 0.8rem;
     margin: 0 0 1.25rem;
   }
 
   .tabs {
     display: flex;
-    border: 1px solid var(--border-col);
-    border-radius: 8px;
+    border: 2px solid var(--border-col);
+    border-radius: 0;
     overflow: hidden;
     margin-bottom: 1.5rem;
   }
   .tab {
     flex: 1;
-    padding: 0.5rem;
+    padding: 0.6rem;
     background: transparent;
     border: none;
+    border-right: 2px solid var(--border-col);
     color: var(--text-muted);
-    font-size: 0.875rem;
+    font-family: var(--font-pixel);
+    font-size: 0.6rem;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    letter-spacing: 0.05em;
+    transition: background 0.1s, color 0.1s;
   }
+  .tab:last-child { border-right: none; }
   .tab.active {
     background: var(--primary);
     color: var(--road-xdark);
-    font-weight: 600;
   }
   .tab:not(.active):hover {
     background: var(--surface2);
@@ -469,82 +475,81 @@
   }
   label {
     display: block;
-    font-size: 0.8rem;
-    font-weight: 600;
+    font-family: var(--font-pixel);
+    font-size: 0.6rem;
     color: var(--text-muted);
-    margin-bottom: 0.35rem;
+    margin-bottom: 0.4rem;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.08em;
   }
   input {
     width: 100%;
     box-sizing: border-box;
     background: var(--surface2);
-    border: 1px solid var(--border-col);
-    border-radius: 6px;
+    border: 2px solid var(--border-col);
+    border-radius: 0;
     padding: 0.6rem 0.75rem;
     color: var(--text);
-    font-size: 0.95rem;
-    transition: border-color 0.15s;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
     outline: none;
+    transition: border-color 0.1s;
   }
-  input:focus {
-    border-color: var(--primary);
-  }
-  input::placeholder {
-    color: var(--text-muted);
-    opacity: 0.6;
-  }
-  input:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  input:focus { border-color: var(--primary); }
+  input::placeholder { color: var(--text-muted); opacity: 0.5; }
+  input:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .error {
     background: rgba(229, 57, 53, 0.12);
-    border: 1px solid var(--danger);
-    border-radius: 6px;
+    border: 2px solid var(--danger);
+    border-radius: 0;
     padding: 0.6rem 0.75rem;
     color: #ef9a9a;
-    font-size: 0.875rem;
+    font-size: 0.8rem;
     margin-bottom: 1rem;
   }
 
   .info {
-    background: rgba(0, 200, 150, 0.1);
-    border: 1px solid var(--primary);
-    border-radius: 6px;
+    background: rgba(0, 200, 150, 0.08);
+    border: 2px solid var(--primary);
+    border-radius: 0;
     padding: 0.6rem 0.75rem;
     color: var(--primary);
-    font-size: 0.875rem;
+    font-size: 0.8rem;
     margin-bottom: 1rem;
   }
 
   .submit-btn {
     width: 100%;
-    padding: 0.7rem;
+    padding: 0.75rem;
     background: var(--cta);
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    font-size: 0.95rem;
-    font-weight: 700;
+    color: var(--road-xdark);
+    border: 2px solid var(--cta-dark);
+    border-radius: 0;
+    font-family: var(--font-pixel);
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    transition: background 0.15s;
+    transition: background 0.1s, box-shadow 0.1s;
     margin-bottom: 1rem;
+    box-shadow: 4px 4px 0 var(--cta-dark);
   }
-  .submit-btn:hover:not(:disabled) { background: var(--cta-dark); }
-  .submit-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+  .submit-btn:hover:not(:disabled) {
+    background: var(--cta-dark);
+    box-shadow: 2px 2px 0 var(--cta-dark);
+    transform: translate(2px, 2px);
+  }
+  .submit-btn:disabled { opacity: 0.55; cursor: not-allowed; box-shadow: none; }
 
   .spinner {
-    width: 14px;
-    height: 14px;
-    border: 2px solid rgba(255,255,255,0.4);
-    border-top-color: #fff;
+    width: 10px;
+    height: 10px;
+    border: 2px solid rgba(0,0,0,0.3);
+    border-top-color: var(--road-xdark);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
   }
@@ -557,7 +562,7 @@
 
   .switch {
     text-align: center;
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     color: var(--text-muted);
     margin: 0;
   }
@@ -566,7 +571,8 @@
     border: none;
     color: var(--link);
     cursor: pointer;
-    font-size: inherit;
+    font-family: var(--font-pixel);
+    font-size: 0.6rem;
     padding: 0 0.25rem;
     text-decoration: underline;
   }
@@ -574,12 +580,12 @@
 
   .verify-banner {
     margin-top: 1rem;
-    background: rgba(255, 193, 7, 0.1);
-    border: 1px solid #ffc107;
-    border-radius: 6px;
+    background: rgba(255, 193, 7, 0.08);
+    border: 2px solid var(--primary);
+    border-radius: 0;
     padding: 0.75rem;
-    font-size: 0.875rem;
-    color: #ffd54f;
+    font-size: 0.8rem;
+    color: var(--primary);
     text-align: center;
   }
   .verify-banner p { margin: 0 0 0.5rem; }

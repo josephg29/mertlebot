@@ -4,15 +4,13 @@
   import { initAuth, authStore } from '$lib/auth-store.js';
   import { onMount } from 'svelte';
   
-  const { children } = $props();
+  const { children, data } = $props();
   
   onMount(() => {
     initAuth();
   });
   
-  // Export auth store for use in pages
-  export let data;
-  $: auth = $authStore;
+  let auth = $derived($authStore);
 </script>
 
 <Navigation {auth} />

@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { authStore } from '$lib/auth-store.js';
   import { goto } from '$app/navigation';
   import WiringCanvas from '$lib/wiregen/WiringCanvas.svelte';
   import InstructionBook from '$lib/InstructionBook.svelte';
@@ -176,6 +177,13 @@
   let loadingNoteTimer = null;
   let loadingChatMsg = null;
   let buildNavCleanup = () => {};
+
+
+  /* ── Auth state ── */
+  let showLoginModal = false, showRegisterModal = false;
+  let loginEmail = '', loginPassword = '';
+  let registerEmail = '', registerUsername = '', registerPassword = '', registerConfirmPassword = '';
+  let authLoading = false, authError = '';
 
   /* ── Clarify state ── */
   let clarifyQuestions = [], clarifyAnswers = {}, clarifyIdx = 0, clarifyOriginalPrompt = '';
@@ -2648,7 +2656,7 @@
         {#if authLoading}LOGGING IN...{:else}LOGIN{/if}
       </button>
       <div class="modal-hint">
-        Don't have an account? <a href="javascript:void(0)" on:click={() => { showLoginModal = false; showRegisterModal = true; }}>Register</a>
+        Don't have an account? <button type="button" class="link-btn" on:click={() => { showLoginModal = false; showRegisterModal = true; }}>Register</button>
       </div>
     </div>
     <button type="button" class="modal-close-btn" on:click={() => showLoginModal = false}>CLOSE</button>
@@ -2676,7 +2684,7 @@
         {#if authLoading}CREATING ACCOUNT...{:else}REGISTER{/if}
       </button>
       <div class="modal-hint">
-        Already have an account? <a href="javascript:void(0)" on:click={() => { showRegisterModal = false; showLoginModal = true; }}>Login</a>
+        Already have an account? <button type="button" class="link-btn" on:click={() => { showRegisterModal = false; showLoginModal = true; }}>Login</button>
       </div>
     </div>
     <button type="button" class="modal-close-btn" on:click={() => showRegisterModal = false}>CLOSE</button>

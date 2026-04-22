@@ -1,9 +1,9 @@
 <script>
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { House, Zap, Info, Mail, BadgeDollarSign, Bot, Palette, Rocket, LogIn, UserPlus, LogOut, User } from 'lucide-svelte';
-  import { authStore, logout } from '$lib/auth-store.js';
+  import { logout } from '$lib/auth-store.js';
 
-  export let auth = $authStore;
+  let { auth } = $props();
   
   const navItems = [
     { href: '/', label: 'HOME', icon: House },

@@ -1,5 +1,5 @@
 <script>
-  import { Mail, Wrench, Briefcase, Twitter, AlertTriangle, Clock, Globe, Zap, BadgeDollarSign, Check } from 'lucide-svelte';
+  import { Mail, Wrench, Briefcase, X, AlertTriangle, Clock, Globe, Zap, BadgeDollarSign, Check } from 'lucide-svelte';
 
   let formData = {
     name: '',
@@ -53,7 +53,7 @@
     { icon: Mail, title: 'Email', details: 'contact@mertle.bot', desc: 'General inquiries' },
     { icon: Wrench, title: 'Support', details: 'support@mertle.bot', desc: 'Technical help & bugs' },
     { icon: Briefcase, title: 'Business', details: 'partnerships@mertle.bot', desc: 'Partnerships & enterprise' },
-    { icon: Twitter, title: 'Social', details: '@mertlebot', desc: 'Twitter & community' }
+    { icon: X, title: 'Social', details: '@mertlebot', desc: 'Twitter & community' }
   ];
   
   let openFaqIndex = null;
