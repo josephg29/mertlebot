@@ -2,7 +2,7 @@ services:
   - type: web
     name: mertlebot
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm ci && npm run build
     startCommand: node build/index.js
     healthCheckPath: /api/health
@@ -12,9 +12,3 @@ services:
         value: "20"
       - key: ANTHROPIC_API_KEY
         sync: false
-      - key: DATA_DIR
-        value: /var/data
-    disk:
-      name: mertle-data
-      mountPath: /var/data
-      sizeGB: 1
