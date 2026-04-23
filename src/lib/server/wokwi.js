@@ -50,6 +50,113 @@ export const BUILTIN_HEADERS = new Set([
   'math.h','stdio.h','string.h','stdlib.h',
 ]);
 
+/**
+ * Component pin geometry offsets relative to component position (x, y).
+ * Each pin is identified by a key (name) and its [dx, dy] offset.
+ */
+export const COMPONENT_PIN_OFFSETS = {
+  led: {
+    A: [8, 54],        // Anode (+)
+    C: [16, 54]        // Cathode (-)
+  },
+  resistor: {
+    1: [0, 10],        // Left pin
+    2: [80, 10]        // Right pin
+  },
+  button: {
+    1: [0, 0],         // Top-left
+    2: [40, 0],        // Top-right
+    3: [0, 40],        // Bottom-left
+    4: [40, 40]        // Bottom-right
+  },
+  buzzer: {
+    '+': [10, 40],     // Positive
+    '-': [26, 40]      // Negative
+  },
+  servo: {
+    GND: [0, 30],
+    V5: [0, 37],
+    SIG: [0, 44]
+  },
+  dht22: {
+    VCC: [7, 60],
+    DATA: [16, 60],
+    GND: [33, 60]
+  },
+  'hc-sr04': {
+    VCC: [12, 0],
+    TRIG: [28, 0],
+    ECHO: [52, 0],
+    GND: [68, 0]
+  },
+  oled: {
+    GND: [10, 50],
+    VCC: [22, 50],
+    SCL: [38, 50],
+    SDA: [50, 50]
+  },
+  'lcd-i2c': {
+    GND: [14, 60],
+    VCC: [28, 60],
+    SDA: [42, 60],
+    SCL: [56, 60]
+  }
+};
+
+/**
+ * Validate that all component pins in a wiring diagram have at least one wire endpoint.
+ * @param {object} diagram - Parsed wiregen diagram JSON
+ * @returns {{ ok: boolean, orphans: Array<{componentId: string, pin: string, x: number, y: number}> }}
+ */
+export function validateDiagram(diagram) {
+  const orphans = [];
+  const tolerance = 4; // pixels
+
+  if (!diagram.components || !Array.isArray(diagram.components)) {
+    return { ok: true, orphans: [] };
+  }
+
+  const wires = diagram.wires || [];
+
+  for (const component of diagram.components) {
+    const componentType = component.type;
+    const pinOffsets = COMPONENT_PIN_OFFSETS[componentType];
+
+    if (!pinOffsets) {
+      // Unknown component type — skip validation
+      continue;
+    }
+
+    for (const [pinName, [dx, dy]] of Object.entries(pinOffsets)) {
+      const pinX = component.x + dx;
+      const pinY = component.y + dy;
+
+      // Check if this pin is the endpoint of any wire
+      const isConnected = wires.some(wire => {
+        if (!wire.path || !Array.isArray(wire.path)) return false;
+        return wire.path.some(point => {
+          const distance = Math.hypot(point[0] - pinX, point[1] - pinY);
+          return distance <= tolerance;
+        });
+      });
+
+      if (!isConnected) {
+        orphans.push({
+          componentId: component.id,
+          pin: pinName,
+          x: pinX,
+          y: pinY
+        });
+      }
+    }
+  }
+
+  return {
+    ok: orphans.length === 0,
+    orphans
+  };
+}
+
 export function extractLibraries(sketch) {
   const headers = [...sketch.matchAll(/#include\s*<([^>]+)>/g)].map(m => m[1]);
   return [...new Set(

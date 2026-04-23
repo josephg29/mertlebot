@@ -1,10 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { loadConfig } from './config.js';
+import { env } from '$env/dynamic/private';
 
 function getEnvKey(provider) {
   return provider === 'deepseek'
-    ? process.env.DEEPSEEK_API_KEY
-    : process.env.ANTHROPIC_API_KEY;
+    ? (env.DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY)
+    : (env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY);
 }
 
 /**
@@ -14,8 +14,7 @@ function getEnvKey(provider) {
 
 export class LLMService {
   constructor() {
-    this.config = loadConfig();
-    this.provider = this.config.provider || 'anthropic';
+    this.provider = 'anthropic';
   }
 
   /**
@@ -70,7 +69,7 @@ export class LLMService {
    * Get API key: saved config first, then environment variable fallback
    */
   _getApiKey() {
-    return this.config.apiKey || getEnvKey(this.provider) || null;
+    return getEnvKey(this.provider) || null;
   }
 
   /**

@@ -310,7 +310,7 @@ export function getUserByEmail(email) {
 }
 
 export function getUserById(id) {
-  return getDb().prepare('SELECT id, email, created_at, email_verified_at FROM users WHERE id = ?').get(id) ?? null;
+  return getDb().prepare('SELECT id, email, created_at FROM users WHERE id = ?').get(id) ?? null;
 }
 
 export function updateFailedAttempts(userId, attempts, lockedUntil = 0) {
@@ -365,31 +365,6 @@ export function updateUserPassword(userId, passwordHash) {
     .run(passwordHash, userId);
 }
 
-// ── Email verification ──────────────────────────────────────────────────────
-
-export function createEmailVerificationToken(tokenHash, userId, expiresAt) {
-  const db = getDb();
-  db.prepare('DELETE FROM email_verification_tokens WHERE user_id = ?').run(userId);
-  db.prepare('INSERT INTO email_verification_tokens (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
-    .run(tokenHash, userId, expiresAt, Date.now());
-}
-
-export function getEmailVerificationToken(tokenHash) {
-  return getDb()
-    .prepare('SELECT * FROM email_verification_tokens WHERE token_hash = ? AND expires_at > ? AND used_at IS NULL')
-    .get(tokenHash, Date.now()) ?? null;
-}
-
-export function consumeEmailVerificationToken(tokenHash) {
-  getDb().prepare('UPDATE email_verification_tokens SET used_at = ? WHERE token_hash = ?')
-    .run(Date.now(), tokenHash);
-}
-
-export function markEmailVerified(userId) {
-  getDb().prepare('UPDATE users SET email_verified_at = ? WHERE id = ?')
-    .run(Date.now(), userId);
-}
-
 // ── Health ──────────────────────────────────────────────────────────────────
 
 export function checkIntegrity() {
@@ -410,7 +385,7 @@ export function dbPath() {
 export function getUserProfile(id) {
   return getDb().prepare(
     `SELECT id, email, display_name, avatar_url, bio,
-            notification_prefs, privacy_settings, created_at, email_verified_at
+            notification_prefs, privacy_settings, created_at
      FROM users WHERE id = ?`
   ).get(id) ?? null;
 }

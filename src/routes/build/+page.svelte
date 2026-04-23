@@ -1,8 +1,7 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import WiringCanvas from '$lib/wiregen/WiringCanvas.svelte';
   import { mount, unmount } from 'svelte';
-  import { authStore, login, register, logout } from '$lib/auth-store.js';
 
   /* ── Shared SVG icons ── */
   const ICON_TRASH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2 0 0,1-2,2H8a2,2 0 0,1-2-2L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4a1,1 0 0,1,1-1h4a1,1 0 0,1,1,1v2"/></svg>';
@@ -36,11 +35,10 @@
   let hero, heroInput, heroGo, chatInput, sendBtn, charCount,
       statusDot, statusText, statusSkill, outputContext,
       chatLog, buildOutput, emptyState, outputScroll,
-      modalBg, keyInput, saveKeyBtn, keyStatus, modalCloseBtn, keyHint,
+      modalBg, modalCloseBtn,
       themeGrid, skillGrid, ageSlider, ageValEl,
       fontSlider, fontValEl,
       histPanel, histList, histClose,
-      providerGrid,
       chatPane, chatToggle, workspace;
 
   /* ── State ── */
@@ -52,19 +50,8 @@
   let _settingsTrigger = null;
   let _wiregenInstances = [];
   
-  /* ── Auth state ── */
-  let showLoginModal = false;
-  let showRegisterModal = false;
-  let authError = '';
-  let authLoading = false;
-  let loginEmail = '';
-  let loginPassword = '';
-  let registerEmail = '';
-  let registerUsername = '';
-  let registerPassword = '';
-  let registerConfirmPassword = '';
-
   /* ── Clarify state ── */
+  let showClarify = false;
   let clarifyQuestions = [], clarifyAnswers = {}, clarifyIdx = 0, clarifyOriginalPrompt = '';
 
   const SKILLS = { 1: 'MONKEY', 2: 'NOVICE', 3: 'BUILDER', 4: 'HACKER', 5: 'EXPERT' };
@@ -78,7 +65,7 @@
   /* ── Session ── */
   function newSession() {
     if (generating && controller) { controller.abort(); controller = null; setGenerating(false); }
-    gid('clarifyBg') && gid('clarifyBg').classList.remove('open');
+    showClarify = false;
     clarifyQuestions = []; clarifyAnswers = {}; clarifyOriginalPrompt = '';
     destroyWiregenInstances();
     buildOutput.classList.remove('active'); buildOutput.innerHTML = '';
@@ -504,7 +491,7 @@
   }
 
   function closeClarifyOverlay() {
-    gid('clarifyBg').classList.remove('open');
+    showClarify = false;
   }
 
   function finishClarify() {
@@ -601,8 +588,9 @@
     }
   }
 
-  function showClarifyOverlay() {
-    gid('clarifyBg').classList.add('open');
+  async function showClarifyOverlay() {
+    showClarify = true;
+    await tick();
     renderClarifyQuestion(0);
   }
 
@@ -642,9 +630,10 @@
     }
     try {
       controller = new AbortController();
+      const headers = { 'Content-Type': 'application/json' };
       const res = await fetch('/api/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ prompt: apiPrompt, skill: getSkill(), age: getAge(), clarifications }),
         signal: controller.signal
       });
@@ -730,8 +719,9 @@
       try {
         const ac = new AbortController();
         const tid = setTimeout(() => ac.abort(), 4000);
+        const clarifyHeaders = { 'Content-Type': 'application/json' };
         const r = await fetch('/api/clarify', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: clarifyHeaders,
           body: JSON.stringify({ prompt: text }), signal: ac.signal
         });
         clearTimeout(tid);
@@ -768,7 +758,8 @@
     btn.addEventListener('click', async () => {
       btn.disabled = true; btn.textContent = 'GENERATING SIM...';
       try {
-        const res = await fetch('/api/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: lastPrompt, guide: lastGuide }) });
+        const simHeaders = { 'Content-Type': 'application/json' };
+        const res = await fetch('/api/simulate', { method: 'POST', headers: simHeaders, body: JSON.stringify({ prompt: lastPrompt, guide: lastGuide }) });
         if (!res.ok) { const { error } = await res.json(); throw new Error(error); }
         const { embedUrl, projectUrl } = await res.json();
         if (!embedUrl?.startsWith('https://wokwi.com/') || !projectUrl?.startsWith('https://wokwi.com/')) throw new Error('Invalid simulation URL');
@@ -786,28 +777,6 @@
   }
 
   /* ── Settings ── */
-  function applyProvider(provider) {
-    providerGrid.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.provider === provider));
-    
-    // Update key input placeholder and hint based on provider
-    const providerInfo = {
-      anthropic: {
-        placeholder: 'sk-ant-...',
-        hint: 'get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>'
-      },
-      deepseek: {
-        placeholder: 'sk-...',
-        hint: 'get your key at <a href="https://platform.deepseek.com/api-keys" target="_blank" rel="noopener noreferrer">platform.deepseek.com</a>'
-      }
-    };
-    
-    const info = providerInfo[provider] || providerInfo.anthropic;
-    keyInput.placeholder = info.placeholder;
-    keyHint.innerHTML = info.hint;
-    
-    localStorage.setItem('mrt-provider', provider);
-  }
-
   function applyTheme(n) {
     document.documentElement.setAttribute('data-theme', n);
     localStorage.setItem('mrt-theme', n);
@@ -820,58 +789,7 @@
     localStorage.setItem('mrt-font-scale', pct);
   }
 
-  async function checkKey() {
-    try { 
-      const r = await fetch('/api/key'); 
-      const { configured, provider } = await r.json(); 
-      if (!configured) {
-        modalBg.classList.add('open');
-      }
-      // Set provider from server if available
-      if (provider) {
-        applyProvider(provider);
-      }
-    } catch {}
-  }
-  async function saveKey() {
-    const k = keyInput.value.trim(); 
-    if (!k) { keyStatus.textContent = 'enter a key'; return; }
-    
-    // Get selected provider
-    const activeChip = providerGrid.querySelector('.chip.active');
-    const selectedProvider = activeChip?.dataset.provider || 'anthropic';
-    
-    saveKeyBtn.disabled = true; 
-    saveKeyBtn.textContent = '...'; 
-    keyStatus.textContent = '';
-    
-    try {
-      const r = await fetch('/api/key', { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ key: k, provider: selectedProvider }) 
-      });
-      
-      if (!r.ok) { 
-        const { error } = await r.json(); 
-        throw new Error(error); 
-      }
-      
-      keyStatus.style.color = 'var(--accent)'; 
-      keyStatus.textContent = 'saved!';
-      setTimeout(() => { 
-        keyStatus.textContent = ''; 
-        keyStatus.style.color = ''; 
-      }, 2000);
-    } catch (e) { 
-      keyStatus.textContent = e.message || 'failed'; 
-    } finally { 
-      saveKeyBtn.disabled = false; 
-      saveKeyBtn.textContent = 'SAVE KEY'; 
-    }
-  }
-
-  function openSettings() { modalBg.classList.add('open'); keyInput.focus(); }
+  function openSettings() { modalBg.classList.add('open'); }
   function closeSettings() { modalBg.classList.remove('open'); if (_settingsTrigger) { _settingsTrigger.focus(); _settingsTrigger = null; } }
 
   /* ── Focus trap ── */
@@ -892,9 +810,8 @@
     outputContext = gid('outputContext');
     chatLog = gid('chatLog'); buildOutput = gid('buildOutput');
     emptyState = gid('emptyState'); outputScroll = gid('outputScroll');
-    modalBg = gid('modalBg'); keyInput = gid('keyInput'); saveKeyBtn = gid('saveKeyBtn');
-    keyStatus = gid('keyStatus'); modalCloseBtn = gid('modalCloseBtn'); keyHint = gid('keyHint');
-    themeGrid = gid('themeGrid'); skillGrid = gid('skillGrid'); providerGrid = gid('providerGrid');
+    modalBg = gid('modalBg'); modalCloseBtn = gid('modalCloseBtn');
+    themeGrid = gid('themeGrid'); skillGrid = gid('skillGrid');
     ageSlider = gid('ageSlider'); ageValEl = gid('ageVal');
     fontSlider = gid('fontSlider'); fontValEl = gid('fontVal');
     histPanel = gid('histPanel'); histList = gid('histList'); histClose = gid('histClose');
@@ -944,6 +861,7 @@
       navigator.clipboard.writeText(text).then(() => { const b = gid('btnExport'); b.classList.add('active'); setTimeout(() => b.classList.remove('active'), 1200); }).catch(() => { addMsg('Copy failed — check browser permissions', 'bot'); });
     });
     gid('btnSettings').addEventListener('click', () => { _settingsTrigger = document.activeElement; openSettings(); });
+    gid('btnHeroSettings')?.addEventListener('click', () => { _settingsTrigger = document.activeElement; openSettings(); });
     gid('btnDelete').addEventListener('click', () => { if (!lastGuide) return; showDeleteConfirm(lastPrompt, lastGuide, () => deleteFromHist(lastTs, null)); });
 
     /* Delete modal */
@@ -985,16 +903,13 @@
     modalCloseBtn.addEventListener('click', closeSettings);
     modalBg.addEventListener('click', e => { if (e.target === modalBg) closeSettings(); });
 
-    /* Clarify overlay */
-    gid('clarifySkip').addEventListener('click', skipClarify);
-    gid('clarifyBg').addEventListener('click', e => { if (e.target === gid('clarifyBg')) skipClarify(); });
-    gid('clarifyBg').addEventListener('keydown', e => { if (e.key === 'Tab') trapFocus(gid('clarifyBg').querySelector('.clarify-card'), e); });
+    /* Clarify overlay — handlers wired inline in the template (elements are conditionally rendered) */
 
     /* Keyboard shortcuts */
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
         if (modalBg.classList.contains('open')) { closeSettings(); return; }
-        if (gid('clarifyBg').classList.contains('open')) { skipClarify(); return; }
+        if (showClarify) { skipClarify(); return; }
         if (histPanel.classList.contains('open')) { histPanel.classList.remove('open'); return; }
         if (generating && controller) { controller.abort(); return; }
       }
@@ -1009,110 +924,25 @@
     themeGrid.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => applyTheme(c.dataset.theme)));
     document.querySelectorAll('.hero-skill').forEach(b => b.addEventListener('click', () => applySkill(Number(b.dataset.skill))));
     skillGrid.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => applySkill(Number(b.dataset.skill))));
-    providerGrid.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => applyProvider(b.dataset.provider)));
     ageSlider.addEventListener('input', () => applyAge(Number(ageSlider.value)));
     fontSlider.addEventListener('input', () => applyFontScale(Number(fontSlider.value)));
-    saveKeyBtn.addEventListener('click', saveKey);
-    keyInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveKey(); });
 
     /* Init sequence */
     applyTheme(localStorage.getItem('mrt-theme') || 'solder');
     applySkill(Number(localStorage.getItem('mrt-skill')) || 1);
-    applyProvider(localStorage.getItem('mrt-provider') || 'anthropic');
     applyAge(Number(localStorage.getItem('mrt-age')) || 25);
     applyFontScale(Number(localStorage.getItem('mrt-font-scale')) || 100);
     renderHist();
     renderHeroRecent();
-    checkKey();
     heroInput.focus();
-    
-    // Handle hash navigation for auth
-    handleHashNavigation();
-    window.addEventListener('hashchange', handleHashNavigation);
   });
-
-  /* ── Auth Functions ── */
-  function handleHashNavigation() {
-    const hash = window.location.hash;
-    if (hash === '#login') {
-      showLoginModal = true;
-      showRegisterModal = false;
-      authError = '';
-    } else if (hash === '#register') {
-      showRegisterModal = true;
-      showLoginModal = false;
-      authError = '';
-    } else {
-      showLoginModal = false;
-      showRegisterModal = false;
-    }
-  }
-
-  async function handleLogin() {
-    if (!loginEmail || !loginPassword) {
-      authError = 'Email and password are required';
-      return;
-    }
-
-    authLoading = true;
-    authError = '';
-
-    const result = await login(loginEmail, loginPassword);
-    
-    if (result.success) {
-      showLoginModal = false;
-      loginEmail = '';
-      loginPassword = '';
-      window.location.hash = '';
-    } else {
-      authError = result.error || 'Login failed';
-    }
-
-    authLoading = false;
-  }
-
-  async function handleRegister() {
-    if (!registerEmail || !registerUsername || !registerPassword || !registerConfirmPassword) {
-      authError = 'All fields are required';
-      return;
-    }
-
-    if (registerPassword !== registerConfirmPassword) {
-      authError = 'Passwords do not match';
-      return;
-    }
-
-    if (registerPassword.length < 8) {
-      authError = 'Password must be at least 8 characters';
-      return;
-    }
-
-    authLoading = true;
-    authError = '';
-
-    const result = await register(registerEmail, registerUsername, registerPassword);
-    
-    if (result.success) {
-      showRegisterModal = false;
-      registerEmail = '';
-      registerUsername = '';
-      registerPassword = '';
-      registerConfirmPassword = '';
-      window.location.hash = '';
-    } else {
-      authError = result.error || 'Registration failed';
-    }
-
-    authLoading = false;
-  }
-
-  async function handleLogout() {
-    await logout();
-  }
 </script>
 
 <!-- ═══ HERO ═══ -->
 <div class="hero" id="hero">
+  <button type="button" class="hero-settings" id="btnHeroSettings" title="Settings" aria-label="Settings">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4,15a1.65,1.65 0 0,0,.33,1.82l.06,.06a2,2 0 1,1-2.83,2.83l-.06-.06a1.65,1.65 0 0,0-1.82-.33 1.65,1.65 0 0,0-1,1.51V21a2,2 0 0,1-4,0v-.09A1.65,1.65 0 0,0 9,19.4a1.65,1.65 0 0,0-1.82,.33l-.06,.06a2,2 0 1,1-2.83-2.83l.06-.06A1.65,1.65 0 0,0 4.68,15a1.65,1.65 0 0,0-1.51-1H3a2,2 0 0,1 0-4h.09A1.65,1.65 0 0,0 4.6,9a1.65,1.65 0 0,0-.33-1.82l-.06-.06a2,2 0 1,1 2.83-2.83l.06,.06A1.65,1.65 0 0,0 9,4.68a1.65,1.65 0 0,0 1-1.51V3a2,2 0 0,1 4,0v.09a1.65,1.65 0 0,0 1,1.51 1.65,1.65 0 0,0 1.82-.33l.06-.06a2,2 0 1,1 2.83,2.83l-.06,.06A1.65,1.65 0 0,0 19.4,9a1.65,1.65 0 0,0 1.51,1H21a2,2 0 0,1 0,4h-.09A1.65,1.65 0 0,0 19.4,15z"/></svg>
+  </button>
   <div class="hero-card">
     <div class="hero-title">mertle.bot</div>
     <div class="hero-tag">describe it. build it.</div>
@@ -1239,22 +1069,6 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
     <div class="modal-title" id="settingsModalTitle">SETTINGS</div>
     <div class="modal-section">
-      <div class="modal-label">AI Provider</div>
-      <div class="chip-grid" id="providerGrid">
-        <button type="button" class="chip active" data-provider="anthropic">Anthropic Claude</button>
-        <button type="button" class="chip" data-provider="deepseek">DeepSeek</button>
-      </div>
-    </div>
-    <div class="modal-divider"></div>
-    <div class="modal-section">
-      <div class="modal-label">API Key</div>
-      <div class="modal-input-row"><input class="modal-input" id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off"/></div>
-      <button type="button" class="modal-btn" id="saveKeyBtn">SAVE KEY</button>
-      <div class="modal-error" id="keyStatus"></div>
-      <div class="modal-hint" id="keyHint">get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a></div>
-    </div>
-    <div class="modal-divider"></div>
-    <div class="modal-section">
       <div class="modal-label">Skill Level</div>
       <div class="chip-grid" id="skillGrid">
         <button type="button" class="chip" data-skill="1">Monkey</button>
@@ -1291,65 +1105,21 @@
 </div>
 
 <!-- ═══ CLARIFY OVERLAY ═══ -->
-<div class="clarify-bg" id="clarifyBg">
+{#if showClarify}
+<div
+  class="clarify-bg open"
+  id="clarifyBg"
+  onclick={(e) => { if (e.target === e.currentTarget) skipClarify(); }}
+  onkeydown={(e) => { if (e.key === 'Tab') trapFocus(e.currentTarget.querySelector('.clarify-card'), e); }}
+  role="presentation"
+>
   <div class="clarify-card" role="dialog" aria-modal="true" aria-label="A few quick questions">
     <div class="clarify-header">
       <div class="clarify-title">ONE SEC</div>
-      <button type="button" class="clarify-skip" id="clarifySkip">SKIP &gt;&gt; BUILD NOW</button>
+      <button type="button" class="clarify-skip" id="clarifySkip" onclick={skipClarify}>SKIP &gt;&gt; BUILD NOW</button>
     </div>
     <div class="clarify-inner" id="clarifyInner"></div>
   </div>
 </div>
-
-<!-- ═══ AUTH MODALS ═══ -->
-{#if showLoginModal}
-<div class="modal-bg" id="loginModalBg">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
-    <div class="modal-title" id="loginModalTitle">LOGIN</div>
-    <div class="modal-section">
-      {#if authError}
-        <div class="modal-error">{authError}</div>
-      {/if}
-      <div class="modal-label">Email</div>
-      <input class="modal-input" type="email" placeholder="your@email.com" bind:value={loginEmail} disabled={authLoading}/>
-      <div class="modal-label">Password</div>
-      <input class="modal-input" type="password" placeholder="••••••••" bind:value={loginPassword} disabled={authLoading}/>
-      <button type="button" class="modal-btn" on:click={handleLogin} disabled={authLoading}>
-        {#if authLoading}LOGGING IN...{:else}LOGIN{/if}
-      </button>
-      <div class="modal-hint">
-        Don't have an account? <button type="button" class="link-btn" on:click={() => { showLoginModal = false; showRegisterModal = true; }}>Register</button>
-      </div>
-    </div>
-    <button type="button" class="modal-close-btn" on:click={() => showLoginModal = false}>CLOSE</button>
-  </div>
-</div>
 {/if}
 
-{#if showRegisterModal}
-<div class="modal-bg" id="registerModalBg">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="registerModalTitle">
-    <div class="modal-title" id="registerModalTitle">REGISTER</div>
-    <div class="modal-section">
-      {#if authError}
-        <div class="modal-error">{authError}</div>
-      {/if}
-      <div class="modal-label">Email</div>
-      <input class="modal-input" type="email" placeholder="your@email.com" bind:value={registerEmail} disabled={authLoading}/>
-      <div class="modal-label">Username</div>
-      <input class="modal-input" type="text" placeholder="maker123" bind:value={registerUsername} disabled={authLoading}/>
-      <div class="modal-label">Password</div>
-      <input class="modal-input" type="password" placeholder="••••••••" bind:value={registerPassword} disabled={authLoading}/>
-      <div class="modal-label">Confirm Password</div>
-      <input class="modal-input" type="password" placeholder="••••••••" bind:value={registerConfirmPassword} disabled={authLoading}/>
-      <button type="button" class="modal-btn" on:click={handleRegister} disabled={authLoading}>
-        {#if authLoading}CREATING ACCOUNT...{:else}REGISTER{/if}
-      </button>
-      <div class="modal-hint">
-        Already have an account? <button type="button" class="link-btn" on:click={() => { showRegisterModal = false; showLoginModal = true; }}>Login</button>
-      </div>
-    </div>
-    <button type="button" class="modal-close-btn" on:click={() => showRegisterModal = false}>CLOSE</button>
-  </div>
-</div>
-{/if}

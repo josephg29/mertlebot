@@ -12,3 +12,11 @@ data/backups/
 .env.production
 .DS_Store
 artifacts/
+.claude/
+.playwright-mcp/
+playwright-report/
+test-results/
+test-*.md
+test-*.png
+TEST_REPORT_ISSUES.md
+mertle-home.md

@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { json } from '@sveltejs/kit';
 import { getApiKey } from '$lib/server/config.js';
 import { SIM_PROMPT } from '$lib/server/prompts.js';
-import { extractLibraries } from '$lib/server/wokwi.js';
+import { extractLibraries, validateDiagram } from '$lib/server/wokwi.js';
 import { summarizeSupport } from '$lib/projectSupport.js';
 
 function sseEncode(payload) {
@@ -18,16 +18,16 @@ export async function POST({ request }) {
   }
 
   const { prompt, guide } = body;
-  if (!prompt) return json({ error: 'Prompt required' }, { status: 400 });
-  if (!guide) return json({ error: 'Guide required' }, { status: 400 });
-  if (prompt.length > 600) return json({ error: 'Prompt too long (max 600 characters)' }, { status: 400 });
+  if (!prompt) return json({ error: 'Missing required field', field: 'prompt' }, { status: 400 });
+  if (!guide) return json({ error: 'Missing required field', field: 'guide' }, { status: 400 });
+  if (prompt.length > 600) return json({ error: 'Prompt exceeds maximum length', field: 'prompt', max: 600, length: prompt.length }, { status: 400 });
 
   const apiKey = getApiKey();
   if (!apiKey) return json({ error: 'API key not configured' }, { status: 401 });
 
   const support = summarizeSupport(guide);
   if (!support.ok) {
-    return json({ error: `Guide failed validation: ${support.issues.join(' ')}` }, { status: 400 });
+    return json({ error: 'Guide validation failed', issues: support.issues, field: 'guide' }, { status: 400 });
   }
   if (!support.canSimulate) {
     const reason = support.safeTextOnly
@@ -82,7 +82,16 @@ export async function POST({ request }) {
         const sketch = sketchMatch[1].trim();
 
         send({ stage: 'prepare', progress: 56, message: 'Checking generated files...' });
-        JSON.parse(diagram);
+        const diagramObj = JSON.parse(diagram);
+
+        // Validate that all component pins are wired
+        const validation = validateDiagram(diagramObj);
+        if (!validation.ok) {
+          const orphanList = validation.orphans
+            .map(o => `${o.componentId} (${o.pin})`)
+            .join(', ');
+          throw new Error(`Generated wiring diagram failed validation: ${orphanList} missing wire(s)`);
+        }
 
         const libs = extractLibraries(sketch);
         const files = [

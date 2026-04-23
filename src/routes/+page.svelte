@@ -1,2693 +1,696 @@
 <script>
-  import { onMount } from 'svelte';
-  import { authStore } from '$lib/auth-store.js';
-  import { goto } from '$app/navigation';
-  import WiringCanvas from '$lib/wiregen/WiringCanvas.svelte';
-  import InstructionBook from '$lib/InstructionBook.svelte';
-  import { mount, unmount } from 'svelte';
-  import { extractStepGroups, stripMarkdown, summarizeSupport, repairGuide, SIM_SUPPORTED_COMPONENT_TYPES } from '$lib/projectSupport.js';
+  import { MessageSquare, Brain, Package, FlaskConical, Target, Wrench, Rocket, Handshake, Bot, Mail } from 'lucide-svelte';
 
-  /* ── Shared SVG icons ── */
-  const ICON_TRASH = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2 0 0,1-2,2H8a2,2 0 0,1-2-2L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4a1,1 0 0,1,1-1h4a1,1 0 0,1,1,1v2"/></svg>';
-  const ICON_CHECK = '<svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1,5 4,8 9,2"/></svg>';
-  const ICON_DOWNLOAD = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="M21,15v4a2,2 0 0,1-2,2H5a2,2 0 0,1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-
-  /* ── Step instruction-book icons (pixel-art style) ── */
-  const STEP_ICONS = {
-    wire:     '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="M4 12h6"/><path d="M14 12h6"/><circle cx="12" cy="12" r="2"/><path d="M12 4v6"/><path d="M12 14v6"/></svg>',
-    code:     '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="8,6 2,12 8,18"/><polyline points="16,6 22,12 16,18"/><line x1="14" y1="4" x2="10" y2="20"/></svg>',
-    power:    '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polygon points="13,2 4,14 12,14 11,22 20,10 12,10"/></svg>',
-    test:     '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><circle cx="12" cy="12" r="10"/><polyline points="8,12 11,15 16,9"/></svg>',
-    assemble: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
-    default:  '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2"/><path d="M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42"/><path d="M19.78 4.22l-1.42 1.42M5.64 18.36l-1.42 1.42"/></svg>'
-  };
-  const STEP_LABELS = { wire: 'WIRE', code: 'CODE', power: 'POWER', test: 'TEST', assemble: 'BUILD', default: 'STEP' };
-  const HERO_EXAMPLES = [
-    'a motion-activated light',
-    'a temperature sensor with LCD display',
-    'a sound-reactive LED strip',
-    'a soil moisture alert system',
-    'a servo-controlled door lock',
-    'a WiFi weather station'
-  ];
-  const SKILL_HELP = {
-    MONKEY: 'Maximum hand-holding, no experience needed.',
-    NOVICE: 'Friendly explanations with beginner-safe wiring and upload steps.',
-    BUILDER: 'Balanced guidance for makers comfortable assembling circuits.',
-    HACKER: 'Assumes comfort with circuits, debugging, and flashing firmware.',
-    EXPERT: 'Moves fast with concise explanations and fewer training wheels.'
-  };
-  const BUILD_STATUS_STEPS = [
-    'Understanding your idea...',
-    'Selecting components...',
-    'Writing the code...',
-    'Creating wiring diagram...',
-    'Building step-by-step guide...'
-  ];
-  const BUILD_NAV_ITEMS = [
-    { key: 'overview', label: 'Overview' },
-    { key: 'wiring', label: 'Wiring' },
-    { key: 'parts', label: 'Parts' },
-    { key: 'code', label: 'Code' },
-    { key: 'steps', label: 'Steps' }
-  ];
-  const PART_COST_RULES = [
-    { re: /\b(arduino uno|uno r3)\b/, low: 12, high: 28 },
-    { re: /\b(arduino nano|nano every)\b/, low: 8, high: 20 },
-    { re: /\b(esp32)\b/, low: 8, high: 16 },
-    { re: /\b(esp8266|nodemcu|wemos d1 mini)\b/, low: 5, high: 12 },
-    { re: /\b(raspberry pi pico|pico w)\b/, low: 5, high: 12 },
-    { re: /\b(breadboard)\b/, low: 4, high: 9 },
-    { re: /\b(jumper|dupont)\b/, low: 3, high: 7 },
-    { re: /\b(ws2812|neopixel|led strip|rgb strip)\b/, low: 10, high: 24 },
-    { re: /\b(led|rgb led)\b/, low: 0.15, high: 0.6 },
-    { re: /\b(resistor)\b/, low: 0.08, high: 0.3 },
-    { re: /\b(button|pushbutton|tactile switch)\b/, low: 0.2, high: 1 },
-    { re: /\b(buzzer|piezo)\b/, low: 1, high: 4 },
-    { re: /\b(servo)\b/, low: 4, high: 14 },
-    { re: /\b(stepper motor)\b/, low: 9, high: 22 },
-    { re: /\b(dc motor|gear motor)\b/, low: 3, high: 10 },
-    { re: /\b(motor driver|l298n|drv8833|a4988)\b/, low: 4, high: 12 },
-    { re: /\b(relay)\b/, low: 3, high: 8 },
-    { re: /\b(ultrasonic|hc-sr04)\b/, low: 2, high: 5 },
-    { re: /\b(pir|motion sensor)\b/, low: 3, high: 8 },
-    { re: /\b(dht11|dht22|bme280|bmp280|temperature sensor|humidity sensor)\b/, low: 2, high: 10 },
-    { re: /\b(soil moisture)\b/, low: 2, high: 6 },
-    { re: /\b(lcd|1602|20x4)\b/, low: 6, high: 14 },
-    { re: /\b(oled|ssd1306|display)\b/, low: 5, high: 14 },
-    { re: /\b(potentiometer|pot)\b/, low: 0.5, high: 2 },
-    { re: /\b(transistor|mosfet)\b/, low: 0.2, high: 3 },
-    { re: /\b(diode)\b/, low: 0.08, high: 0.5 },
-    { re: /\b(capacitor)\b/, low: 0.1, high: 1 },
-    { re: /\b(sensor)\b/, low: 3, high: 10 },
-    { re: /\b(module)\b/, low: 4, high: 12 },
-    { re: /\b(battery|18650|9v|lipo)\b/, low: 5, high: 18 },
-    { re: /\b(power supply|adapter|usb cable|barrel jack)\b/, low: 4, high: 15 },
-    { re: /\b(switch)\b/, low: 0.5, high: 3 },
-    { re: /\b(enclosure|case|project box)\b/, low: 6, high: 18 }
+  const howItWorks = [
+    { icon: MessageSquare, step: '01', title: 'Describe It', desc: 'Type what you want to build in plain English. No technical jargon needed — just your idea.' },
+    { icon: Brain, step: '02', title: 'AI Does the Work', desc: 'The AI selects the right components, plans the circuit, and writes the code — all at once.' },
+    { icon: Package, step: '03', title: 'Get Everything', desc: 'Receive an interactive wiring diagram, full parts list with links, and ready-to-flash code.' },
+    { icon: FlaskConical, step: '04', title: 'Build or Simulate', desc: 'Follow step-by-step instructions or test your circuit live in the browser before touching a wire.' }
   ];
 
-  function classifyAction(text) {
-    const t = text.toLowerCase();
-    if (/\b(connect|wire|insert|plug|jumper|breadboard|pin\s|attach.*to|hook|link|run a wire)\b/.test(t)) return 'wire';
-    if (/\b(upload|flash|program|code|sketch|ide|compile|open.*ide|download.*code|load)\b/.test(t)) return 'code';
-    if (/\b(power|battery|usb|plug.?in|voltage|supply|adapter|turn on|switch on)\b/.test(t)) return 'power';
-    if (/\b(test|check|verify|press|try|run|blink|observe|confirm|should see|look for|watch)\b/.test(t)) return 'test';
-    if (/\b(solder|mount|secure|screw|glue|tape|place|position|orient|bend|trim|cut)\b/.test(t)) return 'assemble';
-    return 'default';
-  }
-
-  /* ── Helper ── */
-  const gid = id => document.getElementById(id);
-
-  /* ── Auth ── */
-  let csrfToken = '';
-  function getCsrfHeaders() { return csrfToken ? { 'X-CSRF-Token': csrfToken } : {}; }
-
-  /* ── Profile state ── */
-  let profileName = '', profileBio = '', profileAvatar = '';
-  let profileEmail = '', profileSaving = false, profileError = '', profileOk = '';
-  let pwCurrent = '', pwNew = '', pwConfirm = '', pwError = '', pwOk = '', pwSaving = false;
-  let emailNew = '', emailPw = '', emailError = '', emailOk = '', emailSaving = false;
-  let notifEmailBuild = false, notifEmailDigest = false;
-  let privPublic = false;
-
-  /* ── Cloud sync state ── */
-  let syncStatus = 'idle'; // idle | syncing | synced | error
-
-  async function logout() {
-    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
-    sessionStorage.removeItem('csrfToken');
-    goto('/auth');
-  }
-
-  /* ── DOM refs (set in onMount) ── */
-  let hero, heroInput, heroGo, chatInput, sendBtn, charCount,
-      statusDot, statusText, statusSkill, outputContext,
-      chatLog, buildOutput, emptyState, outputScroll,
-      modalBg, keyInput, saveKeyBtn, keyStatus, modalCloseBtn,
-      themeGrid, skillGrid, ageSlider, ageValEl,
-      fontSlider, fontValEl,
-      histPanel, histList, histClose,
-      chatPane, chatToggle, workspace;
-
-  /* ── Cloud project ideas ── */
-  const PROJECT_IDEAS = [
-    'smart plant watering system',
-    'bluetooth LED mood lamp',
-    'RFID door lock',
-    'weather station with e-ink display',
-    'gesture-controlled robot arm',
-    'solar-powered IoT sensor',
-    'retro LED matrix clock',
-    'voice-activated light switch',
-    'DIY oscilloscope',
-    'automated pet feeder',
-    'capacitive touch piano',
-    'GPS tracker with SMS alerts',
-    'self-balancing robot',
-    'ultrasonic parking sensor',
-    'wireless temperature monitor',
-    'MIDI controller with arcade buttons',
-    'laser harp',
-    'wearable step counter',
-    'soil moisture dashboard',
-    'programmable RGB LED cube',
+  const timeline = [
+    { year: 'JUN 2025', title: 'First Prototype', desc: 'Weekend project to generate basic LED circuits' },
+    { year: 'JUL 2025', title: 'Code Generation', desc: 'Added Arduino code output — projects became buildable' },
+    { year: 'AUG 2025', title: 'Parts Database', desc: 'Integrated component specs and buying links' },
+    { year: 'SEP 2025', title: 'Wokwi Simulation', desc: 'Added live circuit testing in browser' },
+    { year: 'OCT 2025', title: 'Skill System', desc: 'Introduced MONKEY to EXPERT difficulty levels' },
+    { year: 'NOW', title: 'Growing Community', desc: 'Makers and students building every day' }
   ];
-  let cloudProps = [];
-  function rotateCloudIdea(i) {
-    const next = PROJECT_IDEAS.filter(p => p !== cloudProps[i].idea)[Math.floor(Math.random() * (PROJECT_IDEAS.length - 1))];
-    cloudProps[i] = { ...cloudProps[i], idea: next };
-    cloudProps = cloudProps;
-  }
 
-  /* ── State ── */
-  let controller = null, generating = false, lastPrompt = '', lastGuide = '',
-      lastSkill = '', lastTs = null, lastPartsForAmazon = [];
-  let statusInterval = null, heroActive = true;
-  const selectedTs = new Set();
-  let _del = { cb: null, guide: null, prompt: null };
-  let _settingsTrigger = null;
-  let _wiregenInstances = [];
-  let _instructionBookInstances = [];
-  let loadingStepIndex = -1, loadingProgress = 0, loadingStartTs = 0;
-  let loadingStepTimers = [];
-  let loadingProgressFrame = null;
-  let loadingHideTimer = null;
-  let loadingNoteTimer = null;
-  let loadingChatMsg = null;
-  let buildNavCleanup = () => {};
-
-
-  /* ── Auth state ── */
-  let showLoginModal = false, showRegisterModal = false;
-  let loginEmail = '', loginPassword = '';
-  let registerEmail = '', registerUsername = '', registerPassword = '', registerConfirmPassword = '';
-  let authLoading = false, authError = '';
-
-  /* ── Clarify state ── */
-  let clarifyQuestions = [], clarifyAnswers = {}, clarifyIdx = 0, clarifyOriginalPrompt = '';
-  let clarifyStage = 'question';
-
-  const SKILLS = { 1: 'MONKEY', 2: 'NOVICE', 3: 'BUILDER', 4: 'HACKER', 5: 'EXPERT' };
-  const INIT_MSG = '<div class="msg bot"><div class="msg-who">MERTLE.BOT</div><div class="msg-body">Ready. Describe any hardware project to get started.</div></div>';
-
-  /* ── Helpers ── */
-  function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-  function scrollChat() { if (chatLog) chatLog.scrollTop = chatLog.scrollHeight; }
-  function scrollOut() { if (outputScroll) outputScroll.scrollTop = outputScroll.scrollHeight; }
-  function normalizeSkillLabel(skill) { return `${skill || 'MONKEY'} MODE`; }
-  function getRenderedSkill() { return lastSkill || getSkill(); }
-  function hashString(str = '') {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
-    return Math.abs(hash).toString(36);
-  }
-  function updateHeroBuildState() {
-    if (!heroInput || !heroGo) return;
-    const valid = heroInput.value.trim().length >= 10;
-    heroGo.disabled = !valid;
-    const hint = gid('heroPromptHint');
-    if (hint) hint.textContent = valid ? 'Ready to generate a full build guide.' : 'Describe your project in at least 10 characters.';
-  }
-  function updateSkillHelper(skill) {
-    const message = SKILL_HELP[skill] || SKILL_HELP.MONKEY;
-    const heroHelp = gid('heroSkillHelp');
-    const modalHelp = gid('skillHelpModal');
-    if (heroHelp) heroHelp.textContent = message;
-    if (modalHelp) modalHelp.textContent = message;
-  }
-  function applyExamplePrompt(prompt) {
-    if (!heroInput) return;
-    heroInput.value = prompt;
-    updateHeroBuildState();
-    heroInput.focus();
-  }
-  function slugifySection(section) {
-    const s = (section || '').toLowerCase();
-    if (s.includes('wiring')) return 'wiring';
-    if (s.includes('part')) return 'parts';
-    if (s.includes('code') || s.includes('firmware') || s.includes('sketch')) return 'code';
-    if (s.includes('step') || s.includes('build') || s.includes('assembly') || s.includes('instructions')) return 'steps';
-    return 'overview';
-  }
-  function inferPreviewType(title, guide) {
-    const text = `${title}\n${guide}`.toLowerCase();
-    if (/\b(servo|lock|door|arm|sweep)\b/.test(text)) return 'servo';
-    if (/\b(display|lcd|oled|weather|counter|count|screen)\b/.test(text)) return 'display';
-    if (/\b(wifi|wireless|station|mqtt|radio|signal)\b/.test(text)) return 'signal';
-    if (/\b(sensor|motion|moisture|ultrasonic|temperature|humidity)\b/.test(text)) return 'sensor';
-    if (/\b(light|led|rgb|strip|blink|sound-reactive|lamp)\b/.test(text)) return 'led';
-    return 'pulse';
-  }
-  function renderProjectPreview(title, guide) {
-    const type = inferPreviewType(title, guide);
-    const label = {
-      led: 'Animated LED response preview',
-      servo: 'Animated servo sweep preview',
-      display: 'Animated display preview',
-      signal: 'Animated wireless activity preview',
-      sensor: 'Animated sensing preview',
-      pulse: 'Animated project behavior preview'
-    }[type];
-    return `
-      <div class="preview-card">
-        <div class="section-header">Project Preview</div>
-        <div class="preview-stage preview-${type}" aria-label="${esc(label)}">
-          <div class="preview-caption">Expected behavior</div>
-          <div class="preview-scene">
-            <div class="preview-core"></div>
-            <div class="preview-leds"><span></span><span></span><span></span><span></span></div>
-            <div class="preview-servo-base"></div>
-            <div class="preview-servo-arm"></div>
-            <div class="preview-display-screen">
-              <span class="preview-display-line"></span>
-              <span class="preview-display-line"></span>
-              <span class="preview-display-line"></span>
-            </div>
-            <div class="preview-signal">
-              <span></span><span></span><span></span>
-            </div>
-            <div class="preview-rings">
-              <span></span><span></span><span></span>
-            </div>
-          </div>
-          <div class="preview-description">${esc(label)}</div>
-        </div>
-      </div>
-    `;
-  }
-  function renderBuildNav() {
-    return `
-      <nav class="build-nav" aria-label="Build sections">
-        ${BUILD_NAV_ITEMS.map(item => `
-          <button type="button" class="build-nav-tab" data-nav-target="${item.key}">
-            ${item.label}
-          </button>
-        `).join('')}
-      </nav>
-    `;
-  }
-  function renderDiagramFallback(message = '') {
-    return `
-      <div class="diagram-fallback">
-        <div class="diagram-fallback-visual" aria-hidden="true">
-          <div class="diagram-board"></div>
-          <div class="diagram-wire diagram-wire-a"></div>
-          <div class="diagram-wire diagram-wire-b"></div>
-          <div class="diagram-node diagram-node-a"></div>
-          <div class="diagram-node diagram-node-b"></div>
-        </div>
-        <div class="diagram-fallback-title">Diagram coming soon for this module</div>
-        <div class="diagram-fallback-copy">${message ? esc(message) + ' ' : ''}Ask me to describe the wiring in text instead.</div>
-      </div>
-    `;
-  }
-  function getCurrentProjectTitle() {
-    return buildOutput?.querySelector('.project-name')?.textContent?.trim() || 'mertle-project';
-  }
-  function extractQuantity(part = '') {
-    const match = part.trim().match(/^(\d+)\s*(x|×)\b/i) || part.trim().match(/^(\d+)\s+(pcs?|pieces?)\b/i);
-    return match ? Math.max(1, Number(match[1]) || 1) : 1;
-  }
-  function estimatePartCost(parts = []) {
-    let low = 0;
-    let high = 0;
-    let matched = 0;
-    parts.forEach((part) => {
-      const qty = Math.min(extractQuantity(part), 8);
-      const normalized = part.toLowerCase();
-      const rule = PART_COST_RULES.find(({ re }) => re.test(normalized));
-      if (rule) {
-        low += rule.low * qty;
-        high += rule.high * qty;
-        matched += 1;
-      } else {
-        low += 2 * qty;
-        high += 8 * qty;
-      }
-    });
-    if (!parts.length) return null;
-    if (!matched) {
-      low = Math.max(low, 12);
-      high = Math.max(high, 24);
-    }
-    return {
-      low: Math.round(low),
-      high: Math.max(Math.round(high), Math.round(low) + 4)
-    };
-  }
-  function estimateBuildTime(parts = [], steps = [], raw = '', title = '') {
-    const stepCount = steps.length;
-    const partCount = parts.length;
-    const text = `${title}\n${raw}`.toLowerCase();
-    let low = 20 + (stepCount * 4) + (partCount * 3);
-    let high = 35 + (stepCount * 7) + (partCount * 5);
-    if (/\b(solder|heat.?shrink|perfboard)\b/.test(text)) { low += 25; high += 50; }
-    if (/\b(enclosure|mount|drill|cut|glue|3d print)\b/.test(text)) { low += 15; high += 35; }
-    if (/\b(calibrate|tune|debug|trim|adjust|test)\b/.test(text)) { low += 10; high += 20; }
-    if (/\b(servo|motor|relay|display|wifi|wireless|weather station|lock)\b/.test(text)) { low += 10; high += 25; }
-    return { low, high: Math.max(high, low + 15) };
-  }
-  function formatCurrencyRange(range) {
-    if (!range) return 'TBD';
-    if (range.high - range.low <= 3) return `$${range.low}`;
-    return `$${range.low}-$${range.high}`;
-  }
-  function formatDuration(minutes) {
-    if (minutes < 60) return `${minutes} min`;
-    const hours = Math.floor(minutes / 60);
-    const rem = minutes % 60;
-    return rem < 10 ? `${hours} hr` : `${hours} hr ${rem} min`;
-  }
-  function formatDurationRange(range) {
-    if (!range) return 'TBD';
-    return `${formatDuration(range.low)}-${formatDuration(range.high)}`;
-  }
-  function renderBuildEstimates(parts = [], steps = [], raw = '', title = '', skill = getRenderedSkill()) {
-    const cost = estimatePartCost(parts);
-    const time = estimateBuildTime(parts, steps, raw, title);
-    return `
-      <div class="build-meta">
-        <div class="build-meta-group">
-          <span class="build-meta-label">Build mode</span>
-          <span class="build-meta-pill" data-meta="skill">${esc(normalizeSkillLabel(skill))}</span>
-        </div>
-        <div class="build-meta-group">
-          <span class="build-meta-label">Est. parts cost</span>
-          <span class="build-meta-pill" data-meta="cost">${esc(formatCurrencyRange(cost))}</span>
-        </div>
-        <div class="build-meta-group">
-          <span class="build-meta-label">Est. build time</span>
-          <span class="build-meta-pill" data-meta="time">${esc(formatDurationRange(time))}</span>
-        </div>
-      </div>
-    `;
-  }
-  function extractPartsFromGuide(raw = '') {
-    const lines = raw.split('\n');
-    let inParts = false;
-    const parts = [];
-    for (const line of lines) {
-      if (/^##\s+/i.test(line)) {
-        inParts = /^##\s+parts\b/i.test(line.trim());
-        continue;
-      }
-      if (!inParts) continue;
-      if (/^[-*]\s+/.test(line)) parts.push(line.replace(/^[-*]\s+/, '').trim());
-      else if (/^#/.test(line)) inParts = false;
-    }
-    return parts;
-  }
-  function getBuildMarkdown() {
-    if (!buildOutput) return '';
-    const title = getCurrentProjectTitle();
-    const overviewSection = buildOutput.querySelector('[data-build-section="overview"]');
-    const description = [...(overviewSection?.querySelectorAll('p') || [])]
-      .map((p) => p.textContent.trim())
-      .filter(Boolean)
-      .join('\n\n');
-    const parts = [...buildOutput.querySelectorAll('[data-build-section="parts"] .parts-list li')]
-      .map((li) => (li.querySelector('.part-name')?.textContent || li.textContent).trim())
-      .filter(Boolean);
-    const codes = [...buildOutput.querySelectorAll('.code-wrap')].map((wrap) => ({
-      name: wrap.querySelector('.file-name')?.textContent?.trim() || 'code.txt',
-      content: wrap.querySelector('.wiring-block')?.textContent?.trim() || ''
-    })).filter((entry) => entry.content);
-    const steps = [...buildOutput.querySelectorAll('.instruction-book-mount')].flatMap((mount) => {
-      try { return JSON.parse(mount.dataset.steps || '[]'); } catch { return []; }
-    });
-    const lines = [`# ${title}`, '', `Skill Level: ${normalizeSkillLabel(getRenderedSkill())}`, ''];
-    const costText = buildOutput.querySelector('.build-meta-pill[data-meta="cost"]')?.textContent?.trim();
-    const timeText = buildOutput.querySelector('.build-meta-pill[data-meta="time"]')?.textContent?.trim();
-    if (costText) lines.push(`Estimated Parts Cost: ${costText}`);
-    if (timeText) lines.push(`Estimated Build Time: ${timeText}`);
-    if (costText || timeText) lines.push('');
-    if (description) lines.push('## Description', '', description, '');
-    if (parts.length) lines.push('## Parts', '', ...parts.map((part) => `- ${part}`), '');
-    if (codes.length) {
-      lines.push('## Code', '');
-      codes.forEach(({ name, content }) => {
-        lines.push(`### ${name}`, '', '```cpp', content, '```', '');
-      });
-    }
-    if (steps.length) lines.push('## Steps', '', ...steps.map((step) => `${step.num}. ${step.text}`), '');
-    return lines.join('\n').trim() + '\n';
-  }
-  function exportPdf() {
-    const guide = lastGuide;
-    if (!guide) return;
-    const title = getCurrentProjectTitle() || 'Mertle Project';
-    const escaped = guide
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const printHtml = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<title>${title}</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Courier New', Courier, monospace; font-size: 11pt; color: #111; background: #fff; padding: 20mm 18mm; max-width: 900px; margin: 0 auto; }
-  h1 { font-size: 18pt; margin-bottom: 6pt; border-bottom: 2px solid #111; padding-bottom: 4pt; }
-  h2 { font-size: 13pt; margin: 14pt 0 5pt; border-bottom: 1px solid #ccc; padding-bottom: 2pt; text-transform: uppercase; letter-spacing: 1px; }
-  pre { background: #f4f4f4; border: 1px solid #ccc; padding: 10pt; font-size: 9.5pt; white-space: pre-wrap; word-break: break-all; margin: 6pt 0; }
-  li { margin: 3pt 0 3pt 18pt; }
-  p { margin: 4pt 0; line-height: 1.5; }
-  @media print { body { padding: 12mm 12mm; } @page { margin: 10mm; } }
-</style>
-</head>
-<body>
-<pre>${escaped}</pre>
-<script>window.onload = () => { window.print(); }<\/script>
-</body>
-</html>`;
-    const win = window.open('', '_blank');
-    if (!win) return;
-    win.document.write(printHtml);
-    win.document.close();
-  }
-  function downloadMarkdownGuide() {
-    const markdown = getBuildMarkdown();
-    if (!markdown) return;
-    const slug = getCurrentProjectTitle().replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'mertle-project';
-    downloadBlob(markdown, `${slug}.md`, 'text/markdown');
-  }
-  async function copyAllCodeBlocks() {
-    const blocks = [...buildOutput.querySelectorAll('.code-wrap')].map((wrap) => {
-      const name = wrap.querySelector('.file-name')?.textContent?.trim() || 'code.txt';
-      const content = wrap.querySelector('.wiring-block')?.textContent?.trim() || '';
-      return content ? `// ${name}\n${content}` : '';
-    }).filter(Boolean);
-    if (!blocks.length) return;
-    await navigator.clipboard.writeText(blocks.join('\n\n'));
-  }
-
-  /* ── Session ── */
-  function newSession() {
-    if (generating && controller) { controller.abort(); controller = null; setGenerating(false); }
-    gid('clarifyBg') && gid('clarifyBg').classList.remove('open');
-    clarifyQuestions = []; clarifyAnswers = {}; clarifyOriginalPrompt = '';
-    clarifyStage = 'question';
-    buildNavCleanup();
-    buildNavCleanup = () => {};
-    destroyWiregenInstances();
-    destroyInstructionBookInstances();
-    buildOutput.classList.remove('active'); buildOutput.innerHTML = '';
-    emptyState.classList.remove('hidden'); outputContext.textContent = '';
-    lastPrompt = ''; lastGuide = ''; lastSkill = ''; lastTs = null;
-    chatInput.value = ''; charCount.textContent = '0/300';
-    chatLog.innerHTML = INIT_MSG; chatInput.focus();
-    gid('btnDelete').style.display = 'none';
-    workspace.classList.add('no-build');
-  }
-
-  /* ── History ── */
-  function getProjectName(item) {
-    if (item.guide) { const m = item.guide.match(/^# (.+)$/m); if (m) return m[1].trim(); }
-    return item.prompt;
-  }
-  function getHist() { try { return JSON.parse(localStorage.getItem('mrt-history') || '[]'); } catch { return []; } }
-  function saveHist(h) { localStorage.setItem('mrt-history', JSON.stringify(h.slice(0, 20))); }
-  function addHist(prompt, skill, guide) {
-    const ts = Date.now();
-    const cloudId = crypto.randomUUID();
-    const h = getHist();
-    h.unshift({ prompt, skill, guide: guide || '', chat: chatLog.innerHTML, ts, cloudId });
-    commitHistory(h);
-    syncProjectToCloud({ cloudId, prompt, skill, guide: guide || '', ts });
-    return ts;
-  }
-  function updateHistChat() {
-    if (!lastTs) return;
-    const h = getHist();
-    const idx = h.findIndex(i => i.ts === lastTs);
-    if (idx === -1) return;
-    h[idx].chat = chatLog.innerHTML;
-    saveHist(h);
-  }
-  function persistTitle(el) {
-    if (!lastTs || !lastGuide) return;
-    const newTitle = el.textContent.trim();
-    if (!newTitle) return;
-    lastGuide = lastGuide.replace(/^# .+$/m, '# ' + newTitle);
-    const h = getHist();
-    const idx = h.findIndex(i => i.ts === lastTs);
-    if (idx === -1) return;
-    h[idx].guide = lastGuide;
-    saveHist(h);
-    renderHist();
-    renderHeroRecent();
-  }
-  function restoreProject(item) {
-    if (!item.guide) return false;
-    const guide = repairGuide(item.guide);
-    const support = summarizeSupport(guide);
-    lastPrompt = item.prompt; lastGuide = item.guide; lastSkill = item.skill; lastTs = item.ts;
-    chatLog.innerHTML = item.chat || INIT_MSG;
-    emptyState.classList.add('hidden');
-    destroyWiregenInstances();
-    destroyInstructionBookInstances();
-    buildOutput.classList.add('active'); buildOutput.classList.remove('streaming-cursor');
-    buildOutput.innerHTML = renderMd(guide);
-    mountWiregenDiagrams();
-    mountInstructionBooks();
-    setupBuildNavigation();
-    workspace.classList.remove('no-build');
-    requestAnimationFrame(() => {
-      const op = workspace.querySelector('.output');
-      op.classList.add('output-entering');
-      op.addEventListener('animationend', () => op.classList.remove('output-entering'), { once: true });
-    });
-    outputContext.textContent = normalizeSkillLabel(lastSkill || item.skill || getSkill());
-    chatInput.value = ''; charCount.textContent = '0/300';
-    gid('btnDelete').style.display = '';
-    addSimActions(support);
-    scrollOut();
-    return true;
-  }
-
-  /* ── Delete helpers ── */
-  function downloadBlob(content, filename, type = 'text/plain') {
-    const b = new Blob([content], { type });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(b); a.download = filename; a.click();
-    URL.revokeObjectURL(a.href);
-  }
-  function downloadGuide(guide, prompt) {
-    const name = getProjectName({ guide, prompt });
-    downloadBlob(guide, (name.slice(0, 40).replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'project') + '.md', 'text/markdown');
-  }
-
-  /* ── Folder / zip download ── */
-  function parseStepsFromGuide(guide) {
-    return extractStepGroups(guide).map((step) => ({
-      ...step,
-      action: classifyAction(step.text),
-    }));
-  }
-
-  async function captureWiregenSvg(diagram) {
-    const container = document.createElement('div');
-    container.style.cssText = 'position:fixed;left:-9999px;top:0;width:960px;height:640px;visibility:hidden;';
-    document.body.appendChild(container);
-    let inst;
-    try {
-      inst = mount(WiringCanvas, { target: container, props: { diagram, compact: false } });
-      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(r))));
-      const svgEl = container.querySelector('.wiregen-diagram');
-      if (!svgEl) return null;
-      const clone = svgEl.cloneNode(true);
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-      clone.removeAttribute('style');
-      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      bg.setAttribute('width', '960'); bg.setAttribute('height', '640'); bg.setAttribute('fill', '#1A2529');
-      clone.insertBefore(bg, clone.firstChild);
-      return '<?xml version="1.0" encoding="utf-8"?>' + new XMLSerializer().serializeToString(clone);
-    } catch (e) {
-      console.error('wiregen SVG capture failed', e); return null;
-    } finally {
-      if (inst) try { unmount(inst); } catch {}
-      document.body.removeChild(container);
-    }
-  }
-
-  function wrapTextLines(ctx, text, maxW) {
-    const words = text.split(' ');
-    const lines = []; let line = '';
-    for (const word of words) {
-      const test = line ? line + ' ' + word : word;
-      if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = word; } else line = test;
-    }
-    if (line) lines.push(line);
-    return lines;
-  }
-
-  function buildProjectHtml(name, guide, diagramCount, steps) {
-    const safeName = esc(name);
-    const safeGuide = esc(guide);
-    const diagramHtml = diagramCount
-      ? Array.from({ length: diagramCount }, (_, i) => {
-          const suffix = diagramCount > 1 ? '-' + (i + 1) : '';
-          return `<figure><img src="images/wiring-diagram${suffix}.svg" alt="Wiring diagram ${i + 1}"><figcaption>Wiring diagram ${i + 1}</figcaption></figure>`;
-        }).join('')
-      : '<p>No wiring diagram is included for this project.</p>';
-    const stepHtml = steps.length
-      ? steps.map((step, i) => `<figure><img src="steps/step-${String(i + 1).padStart(2, '0')}.png" alt="Step ${step.num}"><figcaption>Step ${step.num}: ${esc(step.text)}</figcaption></figure>`).join('')
-      : '<p>No step cards were generated.</p>';
-
-    return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${safeName}</title>
-  <style>
-    body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; background: #0f171a; color: #e7ecef; }
-    main { max-width: 960px; margin: 0 auto; padding: 32px 20px 48px; }
-    h1, h2 { margin: 0 0 16px; }
-    section { margin-top: 32px; }
-    pre { white-space: pre-wrap; background: #162227; padding: 16px; border: 1px solid #29424a; border-radius: 8px; overflow: auto; }
-    figure { margin: 0 0 20px; }
-    img { max-width: 100%; height: auto; display: block; background: #fff; border-radius: 8px; }
-    figcaption { margin-top: 8px; color: #9fb2bb; font-size: 14px; }
-    a { color: #8ad3ff; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>${safeName}</h1>
-    <p><a href="guide.md">Open raw guide.md</a></p>
-    <section>
-      <h2>Guide</h2>
-      <pre>${safeGuide}</pre>
-    </section>
-    <section>
-      <h2>Wiring Diagrams</h2>
-      ${diagramHtml}
-    </section>
-    <section>
-      <h2>Step Cards</h2>
-      ${stepHtml}
-    </section>
-  </main>
-</body>
-</html>`;
-  }
-
-  const STEP_EXPORT_COLORS = {
-    wire:     { accent: '#29B6F6', dark: '#0277BD', label: 'WIRE' },
-    code:     { accent: '#4CAF50', dark: '#388E3C', label: 'CODE' },
-    power:    { accent: '#FFD54F', dark: '#F9A825', label: 'POWER' },
-    test:     { accent: '#00BCD4', dark: '#007C91', label: 'TEST' },
-    assemble: { accent: '#FF7043', dark: '#BF360C', label: 'BUILD' },
-    default:  { accent: '#90A4AE', dark: '#546E7A', label: 'STEP' },
-  };
-
-  function renderStepImage(step, current, total) {
-    const W = 800, H = 280;
-    const canvas = document.createElement('canvas');
-    canvas.width = W; canvas.height = H;
-    const ctx = canvas.getContext('2d');
-    const col = STEP_EXPORT_COLORS[step.action] || STEP_EXPORT_COLORS.default;
-    // Background
-    ctx.fillStyle = '#FAFAFA'; ctx.fillRect(0, 0, W, H);
-    // Top strip
-    ctx.fillStyle = col.accent; ctx.fillRect(0, 0, W, 10);
-    // Left border
-    ctx.fillStyle = col.accent; ctx.fillRect(0, 0, 3, H);
-    // Step badge
-    ctx.fillStyle = col.accent; ctx.fillRect(0, 0, 58, 58);
-    ctx.fillStyle = col.dark; ctx.fillRect(4, 54, 58, 4);
-    ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 18px monospace';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(step.num, 29, 30);
-    // Counter
-    ctx.fillStyle = '#888888'; ctx.font = '10px monospace';
-    ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-    ctx.fillText(current + ' / ' + total, W - 14, 16);
-    // Action badge
-    ctx.font = 'bold 10px monospace';
-    const bw = ctx.measureText(col.label).width + 24;
-    ctx.fillStyle = col.accent; ctx.fillRect(W / 2 - bw / 2, 72, bw, 22);
-    ctx.fillStyle = col.dark; ctx.fillRect(W / 2 - bw / 2 + 2, 92, bw, 3);
-    ctx.fillStyle = '#1a1a1a'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(col.label, W / 2, 83);
-    // Step text
-    ctx.fillStyle = '#1a1a1a'; ctx.font = '14px monospace';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    wrapTextLines(ctx, stripMarkdown(step.text), W - 100).forEach((ln, i) => ctx.fillText(ln, W / 2, 110 + i * 22));
-    return new Promise(res => canvas.toBlob(b => res(b), 'image/png'));
-  }
-
-  async function downloadProjectFolder(guide, prompt) {
-    const { default: JSZip } = await import('jszip');
-    const zip = new JSZip();
-    const support = summarizeSupport(guide);
-    const name = getProjectName({ guide, prompt });
-    const slug = name.slice(0, 40).replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'project';
-    zip.file('guide.md', guide);
-    // Extract wiregen diagrams from markdown
-    const wiregenRegex = /```wiregen\r?\n([\s\S]*?)```/g;
-    let wm; const diagrams = [];
-    while ((wm = wiregenRegex.exec(guide)) !== null) {
-      try { diagrams.push(JSON.parse(wm[1].trim())); } catch {}
-    }
-    const imgFolder = zip.folder('images');
-    for (let i = 0; i < diagrams.length; i++) {
-      const svgStr = await captureWiregenSvg(diagrams[i]);
-      if (svgStr) {
-        const sfx = diagrams.length > 1 ? '-' + (i + 1) : '';
-        imgFolder.file('wiring-diagram' + sfx + '.svg', svgStr);
-      }
-    }
-    // Generate step images
-    const steps = parseStepsFromGuide(guide);
-    if (steps.length) {
-      const stepsFolder = zip.folder('steps');
-      for (let i = 0; i < steps.length; i++) {
-        const blob = await renderStepImage(steps[i], i + 1, steps.length);
-        if (blob) stepsFolder.file('step-' + String(i + 1).padStart(2, '0') + '.png', blob);
-      }
-    }
-    zip.file('support.json', JSON.stringify({
-      supportedDiagram: support.supportedDiagram,
-      safeTextOnly: support.safeTextOnly,
-      canSimulate: support.canSimulate,
-      issues: support.issues,
-    }, null, 2));
-    zip.file('index.html', buildProjectHtml(name, guide, diagrams.length, steps));
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    downloadBlob(zipBlob, slug + '.zip', 'application/zip');
-  }
-
-  function showDeleteConfirm(prompt, guide, onDelete, noDownload) {
-    _del = { cb: onDelete, guide, prompt };
-    gid('delModalPrompt').textContent = prompt;
-    gid('delModalDownload').style.display = noDownload ? 'none' : '';
-    gid('delModalBg').classList.add('open');
-  }
-  function closeDelModal() { gid('delModalBg').classList.remove('open'); _del = { cb: null, guide: null, prompt: null }; }
-
-  function animateDelete(el, onDone) {
-    el.style.height = el.offsetHeight + 'px'; el.style.overflow = 'hidden'; el.style.pointerEvents = 'none';
-    el.style.transition = 'transform .22s ease-in,opacity .22s ease-in';
-    el.style.transform = 'translateX(60px)'; el.style.opacity = '0';
-    setTimeout(() => {
-      el.style.transition = 'height .18s ease,padding .18s ease,margin .18s ease,border-width .18s ease';
-      el.style.height = '0'; el.style.paddingTop = '0'; el.style.paddingBottom = '0';
-      el.style.marginTop = '0'; el.style.marginBottom = '0'; el.style.borderWidth = '0';
-      setTimeout(onDone, 180);
-    }, 220);
-  }
-
-  function commitHistory(h) { saveHist(h); renderHist(); renderHeroRecent(); }
-
-  function deleteFromHist(ts, el) {
-    function doDelete() {
-      const h = getHist().filter(i => i.ts !== ts); commitHistory(h);
-      if (lastTs === ts) { lastTs = null; newSession(); }
-    }
-    if (el) { animateDelete(el, doDelete); } else { doDelete(); }
-  }
-
-  /* ── Multi-select ── */
-  function toggleSelect(ts) {
-    if (selectedTs.has(ts)) selectedTs.delete(ts); else selectedTs.add(ts);
-    updateSelState();
-  }
-  function clearSelection() { selectedTs.clear(); updateSelState(); }
-  function updateSelState() {
-    document.querySelectorAll('.hist-item[data-ts],.hero-recent-item[data-ts]').forEach(el => {
-      el.classList.toggle('selected', selectedTs.has(Number(el.dataset.ts)));
-    });
-    const n = selectedTs.size;
-    const label = n === 1 ? '1 SELECTED' : `${n} SELECTED`;
-    gid('heroSelCount').textContent = label; gid('histSelCount').textContent = label;
-    gid('heroSelBar').classList.toggle('visible', n > 0);
-    gid('histSelBar').classList.toggle('visible', n > 0);
-  }
-  function bulkDelete() {
-    const tsList = [...selectedTs]; const n = tsList.length;
-    showDeleteConfirm(n === 1 ? '1 project' : `${n} projects`, null, () => {
-      const affected = new Set(tsList);
-      tsList.forEach(ts => {
-        const el = document.querySelector(`.hist-item[data-ts="${ts}"],.hero-recent-item[data-ts="${ts}"]`);
-        if (el) animateDelete(el, () => {});
-      });
-      setTimeout(() => {
-        const h = getHist().filter(i => !affected.has(i.ts));
-        const needReset = affected.has(lastTs); if (needReset) lastTs = null;
-        selectedTs.clear(); commitHistory(h);
-        if (needReset) newSession();
-      }, 420);
-    }, true);
-  }
-  function renderHist() {
-    const h = getHist();
-    if (!h.length) { histList.innerHTML = '<div class="hist-empty">No builds yet</div>'; return; }
-    histList.innerHTML = '';
-    h.forEach(item => {
-      const el = document.createElement('div'); el.classList.add('hist-item');
-      el.tabIndex = 0; el.setAttribute('role', 'button'); el.dataset.ts = item.ts;
-      if (selectedTs.has(item.ts)) el.classList.add('selected');
-      const d = new Date(item.ts), ts = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><div class="hist-item-body"><div class="hist-item-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</div><div class="hist-item-meta">${esc(item.skill)} &middot; ${esc(ts)}</div></div><button class="item-dl" title="Download" aria-label="Download project" tabindex="-1">${ICON_DOWNLOAD}</button><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
-      const go = () => {
-        if (selectedTs.size > 0) { toggleSelect(item.ts); return; }
-        histPanel.classList.remove('open');
-        if (!restoreProject(item)) { dismissHero(); chatInput.focus(); }
-      };
-      el.addEventListener('click', go);
-      el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
-      el.querySelector('.item-cb').addEventListener('click', e => { e.stopPropagation(); toggleSelect(item.ts); });
-      el.querySelector('.item-dl').addEventListener('click', e => { e.stopPropagation(); if (item.guide) downloadProjectFolder(item.guide, item.prompt); });
-      el.querySelector('.item-del').addEventListener('click', e => {
-        e.stopPropagation();
-        showDeleteConfirm(getProjectName(item), item.guide, () => deleteFromHist(item.ts, el));
-      });
-      histList.appendChild(el);
-    });
-  }
-
-  /* ── Hero recent projects ── */
-  function renderHeroRecent() {
-    const heroRecent = gid('heroRecent');
-    const h = getHist().slice(0, 5);
-    heroRecent.innerHTML = '';
-    if (!h.length) return;
-    const title = document.createElement('div');
-    title.classList.add('hero-recent-title');
-    title.textContent = 'recent projects';
-    heroRecent.appendChild(title);
-    h.forEach(item => {
-      const el = document.createElement('div'); el.classList.add('hero-recent-item');
-      el.tabIndex = 0; el.setAttribute('role', 'button'); el.dataset.ts = item.ts;
-      if (selectedTs.has(item.ts)) el.classList.add('selected');
-      const ago = timeAgo(item.ts);
-      el.innerHTML = `<button class="item-cb" title="Select" aria-label="Select" tabindex="-1">${ICON_CHECK}</button><span class="hero-recent-prompt" title="${esc(item.prompt)}">${esc(getProjectName(item))}</span><span class="hero-recent-meta">${esc(ago)}</span><button class="item-dl" title="Download" aria-label="Download project" tabindex="-1">${ICON_DOWNLOAD}</button><button class="item-del" title="Delete" aria-label="Delete project" tabindex="-1">${ICON_TRASH}</button>`;
-      const go = () => {
-        if (selectedTs.size > 0) { toggleSelect(item.ts); return; }
-        if (restoreProject(item)) { dismissHero(); } else { heroInput.value = item.prompt; send(item.prompt, null); }
-      };
-      el.addEventListener('click', go);
-      el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
-      el.querySelector('.item-cb').addEventListener('click', e => { e.stopPropagation(); toggleSelect(item.ts); });
-      el.querySelector('.item-dl').addEventListener('click', e => { e.stopPropagation(); if (item.guide) downloadProjectFolder(item.guide, item.prompt); });
-      el.querySelector('.item-del').addEventListener('click', e => {
-        e.stopPropagation();
-        showDeleteConfirm(getProjectName(item), item.guide, () => deleteFromHist(item.ts, el));
-      });
-      heroRecent.appendChild(el);
-    });
-  }
-
-  function timeAgo(ts) {
-    const s = Math.floor((Date.now() - ts) / 1000);
-    if (s < 60) return 'just now';
-    const m = Math.floor(s / 60); if (m < 60) return m + 'm ago';
-    const hr = Math.floor(m / 60); if (hr < 24) return hr + 'h ago';
-    const d = Math.floor(hr / 24); if (d < 7) return d + 'd ago';
-    return new Date(ts).toLocaleDateString();
-  }
-
-  /* ── Hero ── */
-  function dismissHero() {
-    if (!heroActive) return;
-    heroActive = false;
-    hero.classList.add('dismissed');
-    setTimeout(() => hero.classList.add('hidden'), 400);
-    chatInput.focus();
-  }
-
-  /* ── Skill system ── */
-  function applySkill(n) {
-    localStorage.setItem('mrt-skill', n);
-    document.querySelectorAll('.hero-skill').forEach(b => b.classList.toggle('active', b.dataset.skill === String(n)));
-    skillGrid.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.skill === String(n)));
-    const skill = SKILLS[n] || 'MONKEY';
-    statusSkill.textContent = normalizeSkillLabel(skill);
-    updateSkillHelper(skill);
-  }
-  function getSkill() { return SKILLS[Number(localStorage.getItem('mrt-skill')) || 1] || 'MONKEY'; }
-  function getAge() { return Number(localStorage.getItem('mrt-age')) || 25; }
-
-  /* ── Cloud sync helpers ── */
-  function extractTitle(guide) {
-    const m = (guide || '').match(/^#\s+(.+)$/m);
-    return m ? m[1].trim().slice(0, 100) : '';
-  }
-
-  async function syncProjectToCloud({ cloudId, prompt, skill, guide, ts }) {
-    if (!csrfToken || !cloudId) return;
-    const title = extractTitle(guide) || prompt.slice(0, 60);
-    const chatHtml = chatLog ? chatLog.innerHTML : '';
-    try {
-      const res = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
-        body: JSON.stringify({ id: cloudId, title, prompt, skill, guide, chat_html: chatHtml, tags: [], client_ts: ts, updated_at: ts }),
-      });
-      if (res.status === 409) {
-        await fetch(`/api/projects/${cloudId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
-          body: JSON.stringify({ title, prompt, skill, guide, chat_html: chatHtml }),
-        });
-      }
-    } catch { /* background, silent */ }
-  }
-
-  function mergeCloudProjects(updates, deletedIds) {
-    let h = getHist();
-    const deletedSet = new Set(deletedIds || []);
-    h = h.filter(p => !p.cloudId || !deletedSet.has(p.cloudId));
-    for (const proj of (updates || [])) {
-      const idx = h.findIndex(p => p.cloudId === proj.id);
-      if (idx !== -1) {
-        if ((proj.updated_at || 0) > (h[idx].syncedAt || h[idx].ts || 0)) {
-          h[idx] = { ...h[idx], prompt: proj.prompt || h[idx].prompt, skill: proj.skill || h[idx].skill, guide: proj.guide || h[idx].guide, chat: proj.chat_html || h[idx].chat, syncedAt: proj.updated_at, tags: proj.tags || h[idx].tags };
-        }
-      } else {
-        h.push({ cloudId: proj.id, prompt: proj.prompt || proj.title || '', skill: proj.skill || 'MONKEY', guide: proj.guide || '', chat: proj.chat_html || '', ts: proj.client_ts || proj.created_at, syncedAt: proj.updated_at, tags: proj.tags || [] });
-      }
-    }
-    h.sort((a, b) => (b.ts || 0) - (a.ts || 0));
-    localStorage.setItem('mrt-history', JSON.stringify(h.slice(0, 50)));
-    renderHist();
-    renderHeroRecent();
-  }
-
-  function updateSyncDot() {
-    const dot = gid('histSyncDot');
-    if (!dot) return;
-    dot.className = 'hist-sync-dot hist-sync-' + syncStatus;
-    dot.title = { idle: 'Not synced', syncing: 'Syncing…', synced: 'Synced to cloud', error: 'Sync failed' }[syncStatus] || '';
-  }
-
-  async function initSync() {
-    if (!csrfToken) return;
-    const since = Number(localStorage.getItem('mrt-last-sync') || '0');
-    const localItems = getHist().filter(p => p.cloudId).map(p => ({
-      id: p.cloudId, title: extractTitle(p.guide) || p.prompt.slice(0, 60),
-      prompt: p.prompt, skill: p.skill, guide: p.guide, chat_html: p.chat || '',
-      tags: p.tags || [], client_ts: p.ts, updated_at: p.syncedAt || p.ts,
-    }));
-    try {
-      syncStatus = 'syncing'; updateSyncDot();
-      const res = await fetch('/api/projects/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
-        body: JSON.stringify({ since, changes: localItems }),
-      });
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      mergeCloudProjects(data.updates, data.deleted_ids);
-      localStorage.setItem('mrt-last-sync', String(data.server_time || Date.now()));
-      syncStatus = 'synced';
-    } catch { syncStatus = 'error'; }
-    updateSyncDot();
-  }
-
-  /* ── Profile & account functions ── */
-  async function loadProfile() {
-    if (!csrfToken) return;
-    try {
-      const res = await fetch('/api/user/profile', { headers: getCsrfHeaders() });
-      if (!res.ok) return;
-      const p = await res.json();
-      profileName = p.display_name || '';
-      profileBio = p.bio || '';
-      profileAvatar = p.avatar_url || '';
-      profileEmail = p.email || '';
-      notifEmailBuild = !!(p.notification_prefs?.emailBuildComplete);
-      notifEmailDigest = !!(p.notification_prefs?.emailWeeklyDigest);
-      privPublic = !!(p.privacy_settings?.publicProfile);
-      const el = gid('profileEmailDisplay');
-      if (el) el.textContent = p.email || '';
-    } catch { /* silent */ }
-  }
-
-  async function saveProfile() {
-    profileError = ''; profileOk = ''; profileSaving = true;
-    try {
-      const res = await fetch('/api/user/profile', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
-        body: JSON.stringify({
-          display_name: profileName.trim(),
-          avatar_url: profileAvatar.trim() || null,
-          bio: profileBio.trim(),
-          notification_prefs: { emailBuildComplete: notifEmailBuild, emailWeeklyDigest: notifEmailDigest },
-          privacy_settings: { publicProfile: privPublic },
-        }),
-      });
-      const d = await res.json();
-      if (!res.ok) { profileError = d.error || 'Save failed'; }
-      else { profileOk = 'Profile saved!'; setTimeout(() => { profileOk = ''; }, 2500); }
-    } catch { profileError = 'Network error'; }
-    finally { profileSaving = false; }
-  }
-
-  async function changePassword() {
-    pwError = ''; pwOk = '';
-    if (!pwCurrent) { pwError = 'Enter your current password'; return; }
-    if (!pwNew || pwNew.length < 8) { pwError = 'New password must be at least 8 characters'; return; }
-    if (pwNew !== pwConfirm) { pwError = 'Passwords do not match'; return; }
-    pwSaving = true;
-    try {
-      const res = await fetch('/api/user/password', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
-        body: JSON.stringify({ current_password: pwCurrent, new_password: pwNew }),
-      });
-      const d = await res.json();
-      if (!res.ok) { pwError = d.error || 'Failed'; }
-      else { pwOk = 'Password changed!'; pwCurrent = pwNew = pwConfirm = ''; setTimeout(() => { pwOk = ''; }, 3000); }
-    } catch { pwError = 'Network error'; }
-    finally { pwSaving = false; }
-  }
-
-  async function changeEmail() {
-    emailError = ''; emailOk = '';
-    if (!emailNew || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNew.trim())) { emailError = 'Enter a valid email address'; return; }
-    if (!emailPw) { emailError = 'Enter your current password'; return; }
-    emailSaving = true;
-    try {
-      const res = await fetch('/api/user/email', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
-        body: JSON.stringify({ new_email: emailNew.trim(), current_password: emailPw }),
-      });
-      const d = await res.json();
-      if (!res.ok) { emailError = d.error || 'Failed'; }
-      else { emailOk = 'Email updated!'; profileEmail = d.email; const el = gid('profileEmailDisplay'); if (el) el.textContent = d.email; emailNew = emailPw = ''; setTimeout(() => { emailOk = ''; }, 3000); }
-    } catch { emailError = 'Network error'; }
-    finally { emailSaving = false; }
-  }
-
-  /* ── Messages ── */
-  function addMsg(text, role) {
-    const w = document.createElement('div'); w.classList.add('msg', role);
-    const l = document.createElement('div'); l.classList.add('msg-who'); l.textContent = role === 'user' ? 'YOU' : 'MERTLE.BOT';
-    const t = document.createElement('div'); t.classList.add('msg-body'); t.textContent = text;
-    w.appendChild(l); w.appendChild(t); chatLog.appendChild(w); scrollChat();
-    return w;
-  }
-  function addThinkingMsg() {
-    const w = document.createElement('div'); w.classList.add('msg', 'bot');
-    const l = document.createElement('div'); l.classList.add('msg-who'); l.textContent = 'MERTLE.BOT';
-    const t = document.createElement('div'); t.classList.add('msg-body');
-    t.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>';
-    w.appendChild(l); w.appendChild(t); chatLog.appendChild(w); scrollChat();
-    return w;
-  }
-  function setBotMsgBody(wrapper, html) {
-    const body = wrapper?.querySelector('.msg-body');
-    if (body) body.innerHTML = html;
-    scrollChat();
-  }
-  function renderChatLoadingMirror() {
-    if (!loadingChatMsg) return;
-    const activeLabel = loadingStepIndex >= 0 && loadingStepIndex < BUILD_STATUS_STEPS.length
-      ? BUILD_STATUS_STEPS[loadingStepIndex]
-      : 'Preparing your guide...';
-    const note = loadingProgress > 92
-      ? 'Taking a little longer than usual. Still working through the full guide.'
-      : 'I’ll drop the full wiring, parts, code, and steps here as soon as they’re ready.';
-    setBotMsgBody(loadingChatMsg, `
-      <div class="chat-build-status">
-        <div class="chat-build-label">CURRENT STEP</div>
-        <div class="chat-build-step">${esc(activeLabel)}</div>
-        <div class="chat-build-note">${esc(note)}</div>
-      </div>
-    `);
-  }
-
-  function renderLoadingFeed() {
-    const feed = gid('loadingFeed');
-    if (!feed) return;
-    const activeLabel = loadingStepIndex >= 0 && loadingStepIndex < BUILD_STATUS_STEPS.length
-      ? BUILD_STATUS_STEPS[loadingStepIndex]
-      : 'Preparing your guide...';
-    const note = loadingProgress > 92
-      ? 'Still polishing the response. Long builds usually mean more wiring/code detail is being assembled.'
-      : 'Mertle is turning your prompt into a complete project guide with hardware, firmware, and instructions.';
-    feed.innerHTML = `
-      <div class="loading-feed-card">
-        <div class="loading-feed-title">BUILDING YOUR PROJECT</div>
-        <div class="loading-feed-subtitle">Live generation status</div>
-        <div class="loading-feed-active">${esc(activeLabel)}</div>
-        <div class="loading-feed-note">${esc(note)}</div>
-        <div class="loading-feed-list">
-          ${BUILD_STATUS_STEPS.map((step, idx) => {
-            const state = idx < loadingStepIndex ? 'done' : idx === loadingStepIndex ? 'active' : 'pending';
-            return `
-              <div class="loading-feed-step ${state}">
-                <span class="loading-feed-icon">${idx < loadingStepIndex ? '✓' : idx === loadingStepIndex ? '>' : '·'}</span>
-                <span class="loading-feed-text">${esc(step)}</span>
-              </div>
-            `;
-          }).join('')}
-        </div>
-        <div class="loading-feed-progress">
-          <div class="loading-feed-progress-bar" style="width:${loadingProgress.toFixed(1)}%"></div>
-        </div>
-      </div>
-    `;
-    renderChatLoadingMirror();
-  }
-
-  function clearLoadingFeedTimers() {
-    loadingStepTimers.forEach(id => clearTimeout(id));
-    loadingStepTimers = [];
-    if (loadingProgressFrame) cancelAnimationFrame(loadingProgressFrame);
-    loadingProgressFrame = null;
-    if (loadingHideTimer) clearTimeout(loadingHideTimer);
-    loadingHideTimer = null;
-    if (loadingNoteTimer) clearTimeout(loadingNoteTimer);
-    loadingNoteTimer = null;
-  }
-
-  function tickLoadingProgress() {
-    if (!generating) return;
-    const elapsed = performance.now() - loadingStartTs;
-    loadingProgress = Math.min(90, 90 * (1 - Math.exp(-elapsed / 5000)));
-    renderLoadingFeed();
-    loadingProgressFrame = requestAnimationFrame(tickLoadingProgress);
-  }
-
-  function startLoadingFeed() {
-    const feed = gid('loadingFeed');
-    if (!feed) return;
-    clearLoadingFeedTimers();
-    loadingStepIndex = 0;
-    loadingProgress = 4;
-    loadingStartTs = performance.now();
-    feed.hidden = false;
-    loadingChatMsg = addMsg('Starting your build...', 'bot');
-    renderLoadingFeed();
-    BUILD_STATUS_STEPS.slice(1).forEach((_, offset) => {
-      const timer = setTimeout(() => {
-        if (!generating) return;
-        loadingStepIndex = Math.min(offset + 1, BUILD_STATUS_STEPS.length - 1);
-        renderLoadingFeed();
-      }, 1200 + offset * 1100);
-      loadingStepTimers.push(timer);
-    });
-    loadingNoteTimer = setTimeout(() => {
-      if (!generating) return;
-      loadingProgress = Math.max(loadingProgress, 93);
-      renderLoadingFeed();
-    }, 8500);
-    loadingProgressFrame = requestAnimationFrame(tickLoadingProgress);
-  }
-
-  function finishLoadingFeed() {
-    const feed = gid('loadingFeed');
-    if (!feed) return;
-    clearLoadingFeedTimers();
-    loadingStepIndex = BUILD_STATUS_STEPS.length;
-    loadingProgress = 100;
-    renderLoadingFeed();
-    if (loadingChatMsg) {
-      setBotMsgBody(loadingChatMsg, '<div class="chat-build-status"><div class="chat-build-label">READY</div><div class="chat-build-step">Your guide is here.</div><div class="chat-build-note">Scroll the build pane to review the output.</div></div>');
-      loadingChatMsg = null;
-    }
-    loadingHideTimer = setTimeout(() => {
-      feed.hidden = true;
-    }, 380);
-  }
-
-  function focusProjectEdit() {
-    if (!chatPane || !chatInput) return;
-    chatPane.classList.remove('collapsed');
-    const prompt = "I'd like to change...";
-    chatInput.value = prompt;
-    charCount.textContent = `${prompt.length}/300`;
-    chatInput.focus();
-    chatInput.setSelectionRange(prompt.length, prompt.length);
-  }
-
-  function jumpToBuildSection(key) {
-    const target = buildOutput?.querySelector(`[data-build-section="${key}"]`);
-    if (!target || !outputScroll) return;
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
-  function setupBuildNavigation() {
-    buildNavCleanup();
-    buildNavCleanup = () => {};
-    if (!buildOutput || !outputScroll) return;
-    const nav = buildOutput.querySelector('.build-nav');
-    if (!nav) return;
-    const tabs = [...nav.querySelectorAll('.build-nav-tab')];
-    const sections = tabs.map(tab => ({
-      key: tab.dataset.navTarget,
-      tab,
-      section: buildOutput.querySelector(`[data-build-section="${tab.dataset.navTarget}"]`)
-    }));
-    const setActive = (key) => {
-      tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.navTarget === key));
-    };
-    sections.forEach(({ tab, section }) => {
-      tab.classList.toggle('disabled', !section);
-      const handler = () => {
-        if (!section) return;
-        jumpToBuildSection(tab.dataset.navTarget);
-      };
-      tab.addEventListener('click', handler);
-      tab._navHandler = handler;
-    });
-    const onScroll = () => {
-      const rootTop = outputScroll.getBoundingClientRect().top;
-      let active = 'overview';
-      let best = -Infinity;
-      sections.forEach(({ key, section }) => {
-        if (!section) return;
-        const offset = section.getBoundingClientRect().top - rootTop;
-        if (offset <= 120 && offset > best) {
-          best = offset;
-          active = key;
-        }
-      });
-      setActive(active);
-    };
-    outputScroll.addEventListener('scroll', onScroll, { passive: true });
-    onScroll();
-    buildNavCleanup = () => {
-      outputScroll.removeEventListener('scroll', onScroll);
-      sections.forEach(({ tab }) => {
-        if (tab._navHandler) tab.removeEventListener('click', tab._navHandler);
-        delete tab._navHandler;
-      });
-    };
-  }
-
-  /* ── Markdown renderer ── */
-  function inlineFmt(s) { return s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`(.+?)`/g, '<code>$1</code>'); }
-  function guessFile(code, sec) {
-    if (code.includes('#include') || code.includes('void setup()')) return 'sketch.ino';
-    if (code.includes('import ') || code.includes('def ')) return 'main.py';
-    if (code.includes('const ') || code.includes('function ')) return 'index.js';
-    if (sec && /wiring/i.test(sec)) return 'wiring-diagram.txt';
-    return 'code.txt';
-  }
-  function toggleCode(id) { const w = document.getElementById('wrap-' + id); if (w) w.classList.toggle('open'); }
-  function copyCode(id, btn) {
-    const p = document.getElementById(id);
-    if (!p) return;
-    navigator.clipboard.writeText(p.textContent).then(() => {
-      btn.textContent = 'COPIED'; btn.classList.add('copied');
-      setTimeout(() => { btn.textContent = 'COPY'; btn.classList.remove('copied'); }, 1500);
-    }).catch(() => { btn.textContent = 'FAILED'; setTimeout(() => { btn.textContent = 'COPY'; }, 1500); });
-  }
-  function downloadCode(id) {
-    const p = document.getElementById(id);
-    if (!p) return;
-    const w = p.closest('.code-wrap'), n = w ? w.querySelector('.file-name') : null;
-    const f = n ? n.textContent.trim() : 'code.txt';
-    downloadBlob(p.textContent, f);
-  }
-
-  function highlightArduino(raw) {
-    const KW = new Set(['void','int','long','char','float','double','boolean','bool','byte','short',
-      'unsigned','signed','const','static','volatile','extern','struct','union','class','typedef',
-      'new','delete','this','return','if','else','for','while','do','switch','case','break',
-      'continue','default','goto','sizeof','enum','namespace','using','template','public','private',
-      'protected','virtual','override','nullptr','true','false','null','NULL','String',
-      'HIGH','LOW','INPUT','OUTPUT','INPUT_PULLUP','INPUT_PULLDOWN','LED_BUILTIN',
-      'LSBFIRST','MSBFIRST','CHANGE','FALLING','RISING','PRESSED','RELEASED']);
-    const FN = new Set(['setup','loop','pinMode','digitalWrite','digitalRead','analogWrite','analogRead',
-      'analogReference','delay','delayMicroseconds','micros','millis','map','constrain','min','max',
-      'abs','pow','sqrt','sin','cos','tan','floor','ceil','round','log','exp','random','randomSeed',
-      'tone','noTone','shiftOut','shiftIn','pulseIn','pulseInLong','attachInterrupt','detachInterrupt',
-      'interrupts','noInterrupts','Serial','Serial1','Serial2','Serial3','Wire','SPI','EEPROM',
-      'Servo','LiquidCrystal','SoftwareSerial','Keyboard','Mouse',
-      'begin','end','print','println','write','read','available','availableForWrite','flush','peek',
-      'parseInt','parseFloat','find','findUntil','readBytes','readBytesUntil','readString',
-      'readStringUntil','setTimeout','transfer','requestFrom','beginTransmission','endTransmission',
-      'onReceive','onRequest','attach','detach','update','get','put']);
-    const re = /(\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|#[a-zA-Z]\w*[^\n]*|0x[0-9a-fA-F]+[uUlL]*|\b\d+\.?\d*(?:[eE][+-]?\d+)?[fFuUlL]*\b|[a-zA-Z_]\w*)/g;
-    const out = []; let last = 0, m;
-    while ((m = re.exec(raw)) !== null) {
-      if (m.index > last) out.push(esc(raw.slice(last, m.index)));
-      const t = m[0];
-      let cls = null;
-      if (t.startsWith('/*') || t.startsWith('//')) cls = 'ard-cmt';
-      else if (t.startsWith('"') || t.startsWith("'")) cls = 'ard-str';
-      else if (t.startsWith('#')) cls = 'ard-pre';
-      else if (/^0x/i.test(t) || /^\d/.test(t)) cls = 'ard-num';
-      else if (KW.has(t)) cls = 'ard-kw';
-      else if (FN.has(t)) cls = 'ard-fn';
-      out.push(cls ? '<span class="' + cls + '">' + esc(t) + '</span>' : esc(t));
-      last = m.index + t.length;
-    }
-    if (last < raw.length) out.push(esc(raw.slice(last)));
-    return out.join('');
-  }
-
-  function renderMd(raw) {
-    const estimatedParts = extractPartsFromGuide(raw);
-    const estimatedSteps = parseStepsFromGuide(raw);
-    let html = '';
-    const lines = raw.split('\n');
-    let inCode = false, codeLang = '', code = '', inUl = false, inOl = false, sec = '';
-    let partsInSection = [];
-    let stepBuffer = [], title = '';
-    let currentSectionKey = '', sectionOpen = false, sectionHasDiagram = false;
-    lastPartsForAmazon = [];
-    function closeSection() {
-      if (!sectionOpen) return;
-      if (currentSectionKey === 'wiring' && !sectionHasDiagram) html += renderDiagramFallback();
-      html += '</section>';
-      sectionOpen = false;
-      sectionHasDiagram = false;
-    }
-    function openSection(key, label) {
-      closeSection();
-      currentSectionKey = key;
-      sectionOpen = true;
-      sectionHasDiagram = false;
-      html += `<section class="build-section" id="build-section-${key}" data-build-section="${key}">`;
-      if (label) html += '<div class="section-header">' + esc(label) + '</div>';
-    }
-    function cl() {
-      if (inUl) {
-        if (/^PARTS$/i.test(sec) && partsInSection.length) {
-          lastPartsForAmazon = [...partsInSection];
-          html += '</ul><button class="amazon-all-btn" onclick="shopAllOnAmazon()">&gt;&gt; SHOP ALL PARTS ON AMAZON</button>';
-        } else { html += '</ul>'; }
-        inUl = false;
-      }
-      if (inOl) {
-          if (stepBuffer.length) {
-            const stepsJson = JSON.stringify(stepBuffer)
-              .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-            const projectId = hashString((title || 'project') + '|' + raw);
-            html += '<div class="instruction-book-mount" data-project-id="' + projectId + '" data-steps="' + stepsJson + '"></div>';
-            stepBuffer = [];
-          } else {
-            html += '</div>';
-          }
-          inOl = false;
-      }
-    }
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.trimStart().startsWith('```')) {
-        if (inCode) {
-          if (codeLang === 'wiregen') {
-            const jsonStr = code.trim();
-            sectionHasDiagram = true;
-            const escaped = jsonStr.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-            html += '<div class="wiregen-mount" data-diagram="' + escaped + '"></div>';
-          } else {
-            const e = highlightArduino(code.trimEnd()), id = 'c-' + Math.random().toString(36).slice(2, 8), fn = guessFile(code, sec);
-            html += '<div class="code-wrap" id="wrap-' + id + '"><div class="code-file-bar" onclick="toggleCode(\'' + id + '\')"><span class="file-arrow">&#9654;</span><span class="file-name">' + esc(fn) + '</span><div class="code-file-actions"><button class="code-file-btn" onclick="event.stopPropagation();copyCode(\'' + id + '\',this)">COPY</button><button class="code-file-btn" onclick="event.stopPropagation();downloadCode(\'' + id + '\')">DOWNLOAD</button></div></div><div class="wiring-expand"><pre class="wiring-block" id="' + id + '">' + e + '</pre></div></div>';
-          }
-          code = ''; codeLang = ''; inCode = false;
-        } else { cl(); inCode = true; codeLang = line.trimStart().slice(3).trim().toLowerCase(); }
-        continue;
-      }
-      if (inCode) { code += line + '\n'; continue; }
-      if (line.startsWith('# ')) {
-        cl();
-        title = line.slice(2).trim();
-        html += '<div class="build-edit-bar"><button type="button" class="edit-project-btn" onclick="triggerProjectEdit()"><span class="edit-project-icon" aria-hidden="true"></span>EDIT THIS PROJECT</button><div class="build-edit-copy">Jump back to the conversation and ask for a revision.</div></div>';
-        html += '<div class="project-name" contenteditable="true" spellcheck="false" onblur="persistTitle(this)">' + inlineFmt(esc(title)) + '</div><div class="project-name-hint">click to rename</div>';
-        html += renderBuildEstimates(estimatedParts, estimatedSteps, raw, title, getRenderedSkill());
-        html += renderBuildNav();
-        openSection('overview');
-        html += renderProjectPreview(title, raw);
-        continue;
-      }
-      if (line.startsWith('## ')) {
-        cl();
-        sec = line.slice(3).trim();
-        partsInSection = [];
-        openSection(slugifySection(sec), sec);
-        continue;
-      }
-      if (/^[-*]\s/.test(line)) {
-        if (inOl) { continue; }
-        if (!inUl) { html += '<ul class="parts-list">'; inUl = true; }
-        const partText = line.replace(/^[-*]\s/, '');
-        if (/^PARTS$/i.test(sec)) {
-          partsInSection.push(partText);
-          const q = encodeURIComponent(partText);
-          html += '<li><span class="part-name">' + inlineFmt(esc(partText)) + '</span><a href="https://www.amazon.com/s?k=' + q + '" target="_blank" rel="noopener noreferrer" class="part-buy-link">Buy</a></li>';
-        } else { html += '<li>' + inlineFmt(esc(partText)) + '</li>'; }
-        continue;
-      }
-      if (/^\d+\.\s/.test(line)) {
-        if (inUl) { html += '</ul>'; inUl = false; }
-        if (!inOl) { inOl = true; }
-        const stepNum = line.match(/^(\d+)\./)[1];
-        const stepText = line.replace(/^\d+\.\s/, '');
-        const action = classifyAction(stepText);
-        stepBuffer.push({ num: stepNum, text: stepText, action });
-        continue;
-      }
-      if (!line.trim()) {
-        let next = ''; for (let j = i + 1; j < lines.length; j++) { if (lines[j].trim()) { next = lines[j]; break; } }
-        if (inOl && /^\d+\.\s/.test(next)) continue;
-        if (inOl && stepBuffer.length > 0) continue;
-        if (inUl && /^[-*]\s/.test(next)) continue;
-        cl(); continue;
-      }
-      if (inOl && stepBuffer.length > 0) continue;
-      cl(); html += '<p>' + inlineFmt(esc(line)) + '</p>';
-    }
-    if (inCode) {
-      if (codeLang === 'wiregen') {
-        // Streaming: wiregen block not yet closed — show loading placeholder
-        sectionHasDiagram = true;
-        html += '<div class="wiregen-loading">Building wiring diagram...</div>';
-      } else {
-        const e = highlightArduino(code.trimEnd()), id = 'c-' + Math.random().toString(36).slice(2, 8), fn = guessFile(code, sec);
-        html += '<div class="code-wrap" id="wrap-' + id + '"><div class="code-file-bar" onclick="toggleCode(\'' + id + '\')"><span class="file-arrow">&#9654;</span><span class="file-name">' + esc(fn) + '</span><div class="code-file-actions"><button class="code-file-btn" onclick="event.stopPropagation();copyCode(\'' + id + '\',this)">COPY</button><button class="code-file-btn" onclick="event.stopPropagation();downloadCode(\'' + id + '\')">DOWNLOAD</button></div></div><div class="wiring-expand"><pre class="wiring-block" id="' + id + '">' + e + '</pre></div></div>';
-      }
-    }
-    cl();
-    closeSection();
-    return html;
-  }
-
-  function shopAllOnAmazon() {
-    if (!lastPartsForAmazon.length) return;
-    lastPartsForAmazon.forEach(p => { window.open('https://www.amazon.com/s?k=' + encodeURIComponent(p), '_blank', 'noopener,noreferrer'); });
-  }
-
-  function destroyWiregenInstances() {
-    _wiregenInstances.forEach(inst => { try { unmount(inst); } catch {} });
-    _wiregenInstances = [];
-  }
-
-  function mountWiregenDiagrams() {
-    if (!buildOutput) return;
-    const mounts = buildOutput.querySelectorAll('.wiregen-mount');
-    mounts.forEach(el => {
-      if (el.dataset.mounted) return;
-      el.dataset.mounted = '1';
-      try {
-        const diagram = JSON.parse(el.dataset.diagram);
-        const inst = mount(WiringCanvas, { target: el, props: { diagram } });
-        _wiregenInstances.push(inst);
-      } catch (err) {
-        el.innerHTML = renderDiagramFallback(err.message || 'Diagram coming soon for this module');
-      }
-    });
-  }
-
-  function destroyInstructionBookInstances() {
-    _instructionBookInstances.forEach(inst => { try { unmount(inst); } catch {} });
-    _instructionBookInstances = [];
-  }
-
-  function mountInstructionBooks() {
-    if (!buildOutput) return;
-    const mounts = buildOutput.querySelectorAll('.instruction-book-mount');
-    mounts.forEach(el => {
-      if (el.dataset.mounted) return;
-      el.dataset.mounted = '1';
-      try {
-        const steps = JSON.parse(
-          el.dataset.steps
-            .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"')
-        );
-        const projectId = el.dataset.projectId || hashString(JSON.stringify(steps));
-        const inst = mount(InstructionBook, { target: el, props: { steps, projectId } });
-        _instructionBookInstances.push(inst);
-      } catch (err) {
-        el.innerHTML = '<p style="color:var(--hi);font-size:12px;">Instruction book error: ' + esc(err.message) + '</p>';
-      }
-    });
-  }
-
-  /* ── Generate state ── */
-  function setGenerating(on) {
-    generating = on;
-    sendBtn.textContent = on ? 'STOP' : 'SEND';
-    sendBtn.classList.toggle('stopping', on);
-    chatInput.disabled = on;
-    chatPane?.classList.toggle('generating', on);
-    workspace?.classList.toggle('is-generating', on);
-    document.querySelectorAll('.output-head-btn').forEach((btn) => btn.classList.toggle('muted-during-build', on));
-    if (on) {
-      statusDot.classList.add('active');
-      let d = 0; statusText.textContent = 'BUILDING';
-      statusInterval = setInterval(() => { d = (d + 1) % 4; statusText.textContent = 'BUILDING' + '.'.repeat(d); }, 350);
-      startLoadingFeed();
-    } else {
-      statusDot.classList.remove('active');
-      clearInterval(statusInterval); statusText.textContent = 'READY';
-      finishLoadingFeed();
-      if (loadingChatMsg) {
-        loadingChatMsg.remove();
-        loadingChatMsg = null;
-      }
-      chatInput.focus();
-    }
-  }
-
-  /* ── Clarify flow ── */
-  function formatClarifications(answers) {
-    const labels = { board: 'Board', components: 'Available parts', complexity: 'Project complexity', comments: 'Code comments', power: 'Power source', purpose: 'Project purpose' };
-    const lines = Object.entries(answers).filter(([, v]) => v).map(([k, v]) => `- ${labels[k] || k}: ${v}`);
-    return lines.length ? 'Additional context from user:\n' + lines.join('\n') : null;
-  }
-
-  function closeClarifyOverlay() {
-    gid('clarifyBg').classList.remove('open');
-    clarifyStage = 'question';
-  }
-
-  function finishClarify() {
-    if (clarifyStage === 'question') saveClarifyAnswer();
-    closeClarifyOverlay();
-    try { localStorage.setItem('mrt-last-clarify', JSON.stringify(clarifyAnswers)); } catch {}
-    const clarifications = formatClarifications(clarifyAnswers);
-    addMsg('Got it! Building your project now...', 'bot');
-    _doGenerate(clarifyOriginalPrompt, clarifications);
-  }
-
-  function skipClarify() {
-    closeClarifyOverlay();
-    addMsg('On it — building right away.', 'bot');
-    _doGenerate(clarifyOriginalPrompt, null);
-  }
-
-  function saveClarifyAnswer() {
-    const q = clarifyQuestions[clarifyIdx];
-    if (!q) return;
-    const inp = gid('clarifyInner').querySelector('.clarify-text-input');
-    if (inp) clarifyAnswers[q.id] = inp.value.trim();
-  }
-
-  function renderClarifyFrame({ title, subtitle, progressPct, body, footer }) {
-    gid('clarifyInner').innerHTML = `
-      <div class="clarify-progress-meta">
-        <div class="clarify-progress-label">${esc(title)}</div>
-        <div class="clarify-progress-subtitle">${esc(subtitle)}</div>
-      </div>
-      <div class="clarify-progress-bar"><span style="width:${progressPct}%"></span></div>
-      ${body}
-      <div class="clarify-nav">${footer}</div>
-    `;
-  }
-
-  function advanceClarify() {
-    const q = clarifyQuestions[clarifyIdx];
-    if (!q) { finishClarify(); return; }
-    saveClarifyAnswer();
-    if (clarifyIdx < clarifyQuestions.length - 1) {
-      renderClarifyQuestion(clarifyIdx + 1);
-    } else {
-      renderClarifySummary();
-    }
-  }
-
-  function renderClarifyQuestion(idx) {
-    clarifyStage = 'question';
-    clarifyIdx = idx;
-    const q = clarifyQuestions[idx];
-    if (!q) return;
-    const total = clarifyQuestions.length;
-    const prev = clarifyAnswers[q.id] || '';
-    let prevAnswers = {};
-    try { prevAnswers = JSON.parse(localStorage.getItem('mrt-last-clarify') || '{}'); } catch {}
-    const preselect = prev || prevAnswers[q.id] || '';
-
-    const dots = Array.from({ length: total }, (_, i) =>
-      `<span class="clarify-dot${i < idx ? ' done' : i === idx ? ' cur' : ''}"></span>`
-    ).join('');
-
-    // All questions get a text input. Choice/toggle also show chips that populate it.
-    const chipHtml = (q.type === 'choice' || q.type === 'toggle')
-      ? `<div class="clarify-chips">${q.options.map(opt =>
-          `<button type="button" class="clarify-chip${preselect === opt ? ' active' : ''}" data-val="${esc(opt)}">${esc(opt)}</button>`
-        ).join('')}</div>`
-      : '';
-    const inputHtml = `${chipHtml}<input class="clarify-text-input" type="text" placeholder="${esc(q.hint || 'or type your own...')}" value="${esc(preselect)}" maxlength="200" autocomplete="off" spellcheck="false"/>`;
-
-    const isLast = idx === total - 1;
-    renderClarifyFrame({
-      title: `Question ${idx + 1} of ${total}`,
-      subtitle: 'A couple quick choices help tailor the build guide.',
-      progressPct: ((idx + 1) / (total + 1)) * 100,
-      body: `
-        <div class="clarify-progress">${dots}</div>
-        <div class="clarify-question">${esc(q.question)}</div>
-        ${inputHtml}
-      `,
-      footer: `
-        ${idx > 0 ? `<button type="button" class="clarify-back" id="clarifyBack">&lt; GO BACK</button>` : `<span></span>`}
-        <button type="button" class="clarify-next" id="clarifyNext">${isLast ? 'REVIEW BUILD &gt;' : 'NEXT &gt;'}</button>
-      `
-    });
-
-    const textInput = gid('clarifyInner').querySelector('.clarify-text-input');
-
-    if (q.type === 'choice' || q.type === 'toggle') {
-      gid('clarifyInner').querySelectorAll('.clarify-chip').forEach(btn => {
-        btn.addEventListener('click', () => {
-          gid('clarifyInner').querySelectorAll('.clarify-chip').forEach(b => b.classList.toggle('active', b === btn));
-          if (textInput) { textInput.value = btn.dataset.val; textInput.focus(); }
-        });
-      });
-      // Typing in the input deselects chips
-      if (textInput) {
-        textInput.addEventListener('input', () => {
-          gid('clarifyInner').querySelectorAll('.clarify-chip').forEach(b => b.classList.remove('active'));
-        });
-      }
-    }
-
-    const nextBtn = gid('clarifyNext');
-    if (nextBtn) nextBtn.addEventListener('click', advanceClarify);
-    const backBtn = gid('clarifyBack');
-    if (backBtn) backBtn.addEventListener('click', () => { renderClarifyQuestion(idx - 1); });
-
-    if (textInput) {
-      textInput.focus();
-      textInput.addEventListener('keydown', e => { if (e.key === 'Enter') advanceClarify(); });
-    } else if (nextBtn) {
-      nextBtn.focus();
-    }
-  }
-
-  function renderClarifySummary() {
-    clarifyStage = 'summary';
-    const total = clarifyQuestions.length;
-    const board = clarifyAnswers.board || 'No preference';
-    const power = clarifyAnswers.power || 'No preference';
-    renderClarifyFrame({
-      title: 'Review before build',
-      subtitle: 'One last check before Mertle generates the full guide.',
-      progressPct: 100,
-      body: `
-        <div class="clarify-summary">
-          <div class="clarify-summary-row">
-            <span class="clarify-summary-label">Prompt</span>
-            <span class="clarify-summary-value">${esc(clarifyOriginalPrompt)}</span>
-          </div>
-          <div class="clarify-summary-row">
-            <span class="clarify-summary-label">Board</span>
-            <span class="clarify-summary-value">${esc(board)}</span>
-          </div>
-          <div class="clarify-summary-row">
-            <span class="clarify-summary-label">Power</span>
-            <span class="clarify-summary-value">${esc(power)}</span>
-          </div>
-          <div class="clarify-summary-row">
-            <span class="clarify-summary-label">Skill level</span>
-            <span class="clarify-summary-value">${esc(normalizeSkillLabel(getSkill()))}</span>
-          </div>
-          <div class="clarify-summary-note">Answered ${total} setup question${total === 1 ? '' : 's'}.</div>
-        </div>
-      `,
-      footer: `
-        <button type="button" class="clarify-back" id="clarifySummaryBack">&lt; GO BACK</button>
-        <button type="button" class="clarify-next clarify-confirm" id="clarifyConfirm">LOOKS GOOD - BUILD IT</button>
-      `
-    });
-    gid('clarifyConfirm')?.addEventListener('click', finishClarify);
-    gid('clarifySummaryBack')?.addEventListener('click', () => renderClarifyQuestion(Math.max(clarifyQuestions.length - 1, 0)));
-  }
-
-  function showClarifyOverlay() {
-    gid('clarifyBg').classList.add('open');
-    renderClarifyQuestion(0);
-  }
-
-  /* ── Core generate (no UI setup — called after UI is ready) ── */
-  async function _doGenerate(text, clarifications) {
-    const isRevision = !!lastGuide;
-    buildNavCleanup();
-    buildNavCleanup = () => {};
-    buildOutput.classList.add('active');
-    buildOutput.innerHTML = '';
-    buildOutput.classList.add('streaming-cursor');
-    requestAnimationFrame(() => {
-      const op = workspace.querySelector('.output');
-      op.classList.add('output-entering');
-      op.addEventListener('animationend', () => op.classList.remove('output-entering'), { once: true });
-    });
-    const thinkEl = addThinkingMsg();
-    setGenerating(true);
-
-    let apiPrompt = text;
-    if (lastGuide) {
-      apiPrompt = 'Here is the current build guide:\n\n' + lastGuide + '\n\nUser request: ' + text + '\n\nIf this is an edit request, provide the FULL updated build guide with the requested changes applied. Use the same format. If this is a completely new project, ignore the current guide and start fresh.';
-    }
-
-    let accumulated = '', displayed = 0, typeTimer = null, thinkShown = true;
-    function stopTyping() { if (typeTimer) { clearInterval(typeTimer); typeTimer = null; } }
-    function startTyping() {
-      if (typeTimer) return;
-      typeTimer = setInterval(() => {
-        if (displayed >= accumulated.length) return;
-        displayed = Math.min(displayed + 4, accumulated.length);
-        buildOutput.innerHTML = renderMd(accumulated.slice(0, displayed));
-        scrollOut();
-      }, 8);
-    }
-    function parseLine(b) {
-      if (!b.startsWith('data: ')) return null;
-      const d = b.slice(6).trim(); if (d === '[DONE]' || !d) return null;
-      try { return JSON.parse(d); } catch { return null; }
-    }
-    try {
-      controller = new AbortController();
-      const res = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
-        body: JSON.stringify({ prompt: apiPrompt, skill: getSkill(), age: getAge(), clarifications }),
-        signal: controller.signal
-      });
-      if (!res.ok) {
-        const body = await res.text(); let msg;
-        try { msg = JSON.parse(body)?.error; } catch {}
-        if (!msg) { msg = res.status === 401 ? 'invalid x-api-key' : res.status === 429 ? 'rate limited' : body || `Server error ${res.status}`; }
-        throw new Error(msg);
-      }
-
-      if (!res.body) throw new Error('Streaming not supported');
-
-      const reader = res.body.getReader(), dec = new TextDecoder();
-      let buf = '', err2 = null;
-
-      while (true) {
-        const { done, value } = await reader.read(); if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const bl = buf.split('\n'); buf = bl.pop();
-        for (const b of bl) { const p = parseLine(b); if (!p) continue; if (p.error) { err2 = p.error; continue; } if (p.replacing) { accumulated = ''; displayed = 0; stopTyping(); buildOutput.innerHTML = ''; continue; } if (p.t) { if (thinkShown) { thinkEl.remove(); thinkShown = false; } accumulated += p.t; if (!typeTimer) startTyping(); } }
-      }
-      if (buf.trim()) { const p = parseLine(buf); if (p) { if (p.error) err2 = p.error; else if (p.t) { accumulated += p.t; } } }
-      stopTyping(); displayed = accumulated.length;
-      const support = summarizeSupport(accumulated);
-      if (!support.ok) throw new Error(support.issues.join(' '));
-      destroyWiregenInstances();
-      destroyInstructionBookInstances();
-      buildOutput.innerHTML = renderMd(accumulated); scrollOut();
-      mountWiregenDiagrams();
-      mountInstructionBooks();
-      setupBuildNavigation();
-      buildOutput.classList.remove('streaming-cursor');
-      if (thinkShown) { thinkEl.remove(); thinkShown = false; }
-
-      if (err2 && !accumulated) throw new Error(err2);
-      if (!accumulated && !err2) throw new Error('No response — check API key');
-
-      if (/^#\s/m.test(accumulated) && /## PARTS/i.test(accumulated) && /## STEPS/i.test(accumulated)) {
-        lastPrompt = text; lastGuide = accumulated; lastSkill = getSkill();
-        lastTs = addHist(text, lastSkill, accumulated); gid('btnDelete').style.display = '';
-        outputContext.textContent = normalizeSkillLabel(lastSkill);
-        addMsg(isRevision ? 'Updated. Ask me to change anything.' : 'Build guide ready. You can ask me to edit it.', 'bot');
-        addSimActions(support);
-      }
-    } catch (err) {
-      stopTyping(); buildOutput.classList.remove('streaming-cursor');
-      if (thinkShown) { thinkEl.remove(); thinkShown = false; }
-      if (err.name !== 'AbortError') console.error('[mertle] generate error:', err);
-      if (err.name === 'AbortError') {
-        addMsg('Stopped.', 'bot');
-        if (!accumulated) { buildOutput.classList.remove('active'); emptyState.classList.remove('hidden'); outputContext.textContent = ''; workspace.classList.add('no-build'); }
-      } else {
-        const m = err.message || '';
-        const friendly = /credit|billing|too.low|balance/i.test(m)
-          ? 'Whoops! Your Anthropic credit balance is too low — add credits at console.anthropic.com and try again.'
-          : /api.key|authentication|401|invalid.*key|unauthorized/i.test(m)
-          ? 'Whoops! API key error — check your key in Settings and try again.'
-          : /failed validation|diagram unavailable|must include a valid wiregen diagram|unsupported functional parts/i.test(m)
-          ? m
-          : /rate.limit|429|too many/i.test(m)
-          ? 'Whoops! Too many requests — wait a moment and try again.'
-          : /network|fetch|failed to fetch|load/i.test(m)
-          ? 'Whoops! Network error — check your connection and try again.'
-          : /timeout/i.test(m)
-          ? 'Whoops! Request timed out — try again.'
-          : /no response/i.test(m)
-          ? 'Whoops! No response from the API — check your key and try again.'
-          : 'Whoops! Something went wrong. Try again.';
-        if (!accumulated) { buildOutput.innerHTML = ''; }
-        const ep = document.createElement('p'); ep.style.color = 'var(--hi)'; ep.style.marginTop = accumulated ? '16px' : '0'; ep.textContent = friendly;
-        buildOutput.appendChild(ep);
-        const rb = document.createElement('button'); rb.className = 'retry-btn'; rb.textContent = 'Retry';
-        rb.addEventListener('click', () => { send(text, null); });
-        buildOutput.appendChild(rb);
-      }
-    } finally { setGenerating(false); controller = null; updateHistChat(); }
-  }
-
-  /* ── Send (handles clarify intercept then delegates to _doGenerate) ── */
-  async function send(text, clarifications = undefined) {
-    if (generating) { if (controller) controller.abort(); return; }
-    if (!text) return;
-
-    // ── CLARIFY INTERCEPT: fresh builds only, when clarifications not yet decided ──
-    if (clarifications === undefined && !lastGuide && text.length >= 10) {
-      dismissHero();
-      heroInput.value = ''; chatInput.value = ''; charCount.textContent = '0/300';
-      outputContext.textContent = '';
-      addMsg(text, 'user');
-      emptyState.classList.add('hidden');
-      workspace.classList.remove('no-build');
-      const thinkElC = addThinkingMsg();
-      let questions = [];
-      try {
-        const ac = new AbortController();
-        const tid = setTimeout(() => ac.abort(), 4000);
-        const r = await fetch('/api/clarify', {
-          method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() },
-          body: JSON.stringify({ prompt: text }), signal: ac.signal
-        });
-        clearTimeout(tid);
-        if (r.ok) { const d = await r.json(); questions = d.questions || []; }
-      } catch { /* timeout or network error — proceed without clarify */ }
-      thinkElC.remove();
-      if (questions.length > 0) {
-        clarifyOriginalPrompt = text;
-        clarifyQuestions = questions;
-        clarifyAnswers = {};
-        clarifyIdx = 0;
-        showClarifyOverlay();
-        return;
-      }
-      // No questions needed — generate directly
-      await _doGenerate(text, null);
-      return;
-    }
-
-    // ── REGULAR PATH (edit, retry, short prompt, or post-clarify) ──
-    dismissHero();
-    heroInput.value = ''; chatInput.value = ''; charCount.textContent = '0/300';
-    outputContext.textContent = '';
-    addMsg(text, 'user');
-    emptyState.classList.add('hidden');
-    workspace.classList.remove('no-build');
-
-    await _doGenerate(text, typeof clarifications === 'string' ? clarifications : null);
-  }
-
-  function buildSimProgressCard() {
-    const card = document.createElement('div');
-    card.className = 'sim-progress';
-    card.innerHTML = `
-      <div class="sim-progress-head">
-        <span class="sim-progress-title">SIMULATION</span>
-        <span class="sim-progress-percent">0%</span>
-      </div>
-      <div class="sim-progress-bar" aria-hidden="true">
-        <div class="sim-progress-fill"></div>
-      </div>
-      <div class="sim-progress-status">Waiting to start...</div>
-    `;
-    return {
-      card,
-      percent: card.querySelector('.sim-progress-percent'),
-      fill: card.querySelector('.sim-progress-fill'),
-      status: card.querySelector('.sim-progress-status')
-    };
-  }
-
-  function updateSimProgress(progressUi, progress = 0, message = 'Working...') {
-    const pct = Math.max(0, Math.min(100, Math.round(progress)));
-    progressUi.percent.textContent = `${pct}%`;
-    progressUi.fill.style.width = `${pct}%`;
-    progressUi.status.textContent = message;
-  }
-
-  async function readSimulationStream(res, onEvent) {
-    if (!res.body) throw new Error('Streaming not supported');
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-
-    function parseLine(line) {
-      if (!line.startsWith('data: ')) return null;
-      const data = line.slice(6).trim();
-      if (!data || data === '[DONE]') return null;
-      return JSON.parse(data);
-    }
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop();
-      for (const line of lines) {
-        const payload = parseLine(line);
-        if (payload) onEvent(payload);
-      }
-    }
-
-    if (buf.trim()) {
-      const payload = parseLine(buf);
-      if (payload) onEvent(payload);
-    }
-  }
-
-  /* ── Simulate ── */
-  function addSimActions(support) {
-    if (support.canSimulate) {
-      addSimBtn();
-    } else if (support.supportedDiagram && support.simulationBlockers?.length) {
-      const note = document.createElement('p');
-      note.className = 'sim-note';
-      const blockers = support.simulationBlockers;
-      note.textContent = `Simulation unavailable: ${blockers.join(', ')} ${blockers.length === 1 ? 'is' : 'are'} not supported in Wokwi.`;
-      buildOutput.appendChild(note);
-    }
-  }
-
-  function addSimBtn() {
-    const btn = document.createElement('button'); btn.classList.add('sim-btn'); btn.innerHTML = 'SIMULATE &gt;&gt;';
-    btn.addEventListener('click', async () => {
-      btn.disabled = true;
-      btn.textContent = 'GENERATING SIM...';
-      const progressUi = buildSimProgressCard();
-      buildOutput.appendChild(progressUi.card);
-      scrollOut();
-      try {
-        const res = await fetch('/api/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() }, body: JSON.stringify({ prompt: lastPrompt, guide: lastGuide }) });
-        if (!res.ok) { const { error } = await res.json(); throw new Error(error); }
-
-        let result = null;
-        await readSimulationStream(res, (payload) => {
-          if (payload.error) throw new Error(payload.error);
-          if (payload.unsupported) {
-            result = payload;
-            updateSimProgress(progressUi, payload.progress ?? 100, payload.message || 'Simulation unavailable.');
-            return;
-          }
-          updateSimProgress(progressUi, payload.progress ?? 0, payload.message || 'Working...');
-          if (payload.done) result = payload;
-        });
-
-        if (result?.unsupported) {
-          progressUi.card.remove();
-          addMsg(`Simulation not available — this project uses parts Wokwi doesn't support: ${result.reason}`, 'bot');
-          btn.innerHTML = 'SIMULATE &gt;&gt;';
-          btn.disabled = false;
-          return;
-        }
-
-        const { embedUrl, projectUrl } = result || {};
-        if (!embedUrl?.startsWith('https://wokwi.com/') || !projectUrl?.startsWith('https://wokwi.com/')) throw new Error('Invalid simulation URL');
-        btn.remove();
-        updateSimProgress(progressUi, 100, 'Simulation ready.');
-        const fc = document.createElement('div'); fc.classList.add('sim-frame-container');
-        const fr = document.createElement('iframe'); fr.classList.add('sim-frame'); fr.src = embedUrl; fr.setAttribute('allowfullscreen', '');
-        fc.appendChild(fr); buildOutput.appendChild(fc);
-        const lk = document.createElement('div'); lk.classList.add('sim-link');
-        const lt = document.createTextNode('open full editor \u2192 ');
-        const la = document.createElement('a'); la.href = projectUrl; la.target = '_blank'; la.rel = 'noopener noreferrer'; la.textContent = projectUrl;
-        lk.appendChild(lt); lk.appendChild(la); buildOutput.appendChild(lk); scrollOut();
-      } catch (e) {
-        progressUi.card.remove();
-        btn.innerHTML = 'SIMULATE &gt;&gt;';
-        btn.disabled = false;
-        addMsg('Sim error: ' + e.message, 'bot');
-      }
-    });
-    buildOutput.appendChild(btn); scrollOut();
-  }
-
-  /* ── Settings ── */
-  function applyTheme(n) {
-    document.documentElement.setAttribute('data-theme', n);
-    localStorage.setItem('mrt-theme', n);
-    themeGrid.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.theme === n));
-  }
-  function applyAge(a) { ageSlider.value = a; ageValEl.textContent = a; localStorage.setItem('mrt-age', a); }
-  function applyFontScale(pct) {
-    document.documentElement.style.setProperty('--fs', pct / 100);
-    fontSlider.value = pct; fontValEl.textContent = pct + '%';
-    localStorage.setItem('mrt-font-scale', pct);
-  }
-
-  async function checkKey() {
-    try { const r = await fetch('/api/key'); const { configured } = await r.json(); if (!configured) modalBg.classList.add('open'); } catch {}
-  }
-  async function saveKey() {
-    const k = keyInput.value.trim(); if (!k) { keyStatus.textContent = 'enter a key'; return; }
-    saveKeyBtn.disabled = true; saveKeyBtn.textContent = '...'; keyStatus.textContent = '';
-    try {
-      const r = await fetch('/api/key', { method: 'POST', headers: { 'Content-Type': 'application/json', ...getCsrfHeaders() }, body: JSON.stringify({ key: k }) });
-      if (!r.ok) { const { error } = await r.json(); throw new Error(error); }
-      keyStatus.style.color = 'var(--accent)'; keyStatus.textContent = 'saved!';
-      setTimeout(() => { keyStatus.textContent = ''; keyStatus.style.color = ''; }, 2000);
-    } catch (e) { keyStatus.textContent = e.message || 'failed'; }
-    finally { saveKeyBtn.disabled = false; saveKeyBtn.textContent = 'SAVE KEY'; }
-  }
-
-  function openSettings() {
-    modalBg.classList.add('open');
-    keyInput.focus();
-    const nameEl = gid('profileNameInput');
-    const bioEl = gid('profileBioInput');
-    const avatarEl = gid('profileAvatarInput');
-    if (nameEl) nameEl.value = profileName;
-    if (bioEl) bioEl.value = profileBio;
-    if (avatarEl) avatarEl.value = profileAvatar;
-  }
-  function closeSettings() { modalBg.classList.remove('open'); if (_settingsTrigger) { _settingsTrigger.focus(); _settingsTrigger = null; } }
-
-  /* ── Focus trap ── */
-  function trapFocus(el, e) {
-    const sel = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
-    const foc = [...el.querySelectorAll(sel)].filter(n => n.offsetParent !== null);
-    if (!foc.length) return;
-    const first = foc[0], last = foc[foc.length - 1];
-    if (e.shiftKey) { if (document.activeElement === first) { e.preventDefault(); last.focus(); } }
-    else { if (document.activeElement === last) { e.preventDefault(); first.focus(); } }
-  }
-
-  onMount(() => {
-    /* ── Auth: verify session, redirect to /auth if not logged in ── */
-    fetch('/api/auth/session')
-      .then(r => r.json())
-      .then(d => {
-        if (!d.authenticated) { goto('/auth'); return; }
-        csrfToken = d.csrfToken ?? sessionStorage.getItem('csrfToken') ?? '';
-        loadProfile();
-        initSync();
-      })
-      .catch(() => goto('/auth'));
-
-    /* Set DOM refs */
-    hero = gid('hero'); heroInput = gid('heroInput'); heroGo = gid('heroGo');
-    chatInput = gid('chatInput'); sendBtn = gid('sendBtn'); charCount = gid('charCount');
-    statusDot = gid('statusDot'); statusText = gid('statusText'); statusSkill = gid('statusSkill');
-    outputContext = gid('outputContext');
-    chatLog = gid('chatLog'); buildOutput = gid('buildOutput');
-    emptyState = gid('emptyState'); outputScroll = gid('outputScroll');
-    modalBg = gid('modalBg'); keyInput = gid('keyInput'); saveKeyBtn = gid('saveKeyBtn');
-    keyStatus = gid('keyStatus'); modalCloseBtn = gid('modalCloseBtn');
-    themeGrid = gid('themeGrid'); skillGrid = gid('skillGrid');
-    ageSlider = gid('ageSlider'); ageValEl = gid('ageVal');
-    fontSlider = gid('fontSlider'); fontValEl = gid('fontVal');
-    histPanel = gid('histPanel'); histList = gid('histList'); histClose = gid('histClose');
-    chatPane = document.querySelector('.chat');
-    chatToggle = gid('chatToggle');
-    workspace = document.querySelector('main.workspace');
-
-    /* Initialise 2 clouds with random starting ideas */
-    const pick = (exclude) => {
-      const pool = exclude ? PROJECT_IDEAS.filter(p => p !== exclude) : PROJECT_IDEAS;
-      return pool[Math.floor(Math.random() * pool.length)];
-    };
-    const first = pick();
-    cloudProps = [
-      { idea: first,       cls: 'cloud-1' },
-      { idea: pick(first), cls: 'cloud-2' },
-    ];
-
-    /* Expose globals for inline onclick handlers in renderMd() output */
-    window.toggleCode = toggleCode;
-    window.copyCode = copyCode;
-    window.downloadCode = downloadCode;
-    window.persistTitle = persistTitle;
-    window.shopAllOnAmazon = shopAllOnAmazon;
-    window.triggerProjectEdit = focusProjectEdit;
-    window.jumpToBuildSection = jumpToBuildSection;
-
-    /* Input handlers */
-    chatInput.addEventListener('input', () => { charCount.textContent = `${chatInput.value.length}/300`; });
-    chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') send(chatInput.value.trim()); });
-    sendBtn.addEventListener('click', () => { if (generating) { if (controller) controller.abort(); return; } send(chatInput.value.trim()); });
-
-    /* Responsive placeholder — swaps text so it never clips */
-    const CHAT_PLACEHOLDERS = [
-      [250, 'describe a project or ask to edit...'],
-      [150, 'describe or ask to edit...'],
-      [90,  'type a message...'],
-      [0,   '...']
-    ];
-    const updateChatPlaceholder = () => {
-      const w = chatInput.offsetWidth;
-      for (const [min, text] of CHAT_PLACEHOLDERS) {
-        if (w >= min) { chatInput.placeholder = text; return; }
-      }
-    };
-    new ResizeObserver(updateChatPlaceholder).observe(chatInput);
-    updateChatPlaceholder();
-    heroInput.addEventListener('input', updateHeroBuildState);
-    heroInput.addEventListener('keydown', e => { if (e.key === 'Enter' && heroInput.value.trim().length >= 10) send(heroInput.value.trim()); });
-    heroGo.addEventListener('click', () => send(heroInput.value.trim()));
-    gid('heroExamples').querySelectorAll('.hero-example-chip').forEach(btn => btn.addEventListener('click', () => applyExamplePrompt(btn.dataset.prompt)));
-
-    /* Topbar */
-    gid('btnNew').addEventListener('click', newSession);
-    gid('btnHistory').addEventListener('click', () => { renderHist(); histPanel.classList.toggle('open'); });
-    histClose.addEventListener('click', () => { histPanel.classList.remove('open'); clearSelection(); });
-    gid('btnExport').addEventListener('click', () => {
-      if (!lastGuide) { addMsg('No build to export yet — generate a project first.', 'bot'); return; }
-      const ne = buildOutput.querySelector('.project-name');
-      let g = lastGuide; if (ne) g = g.replace(/^# .+$/m, '# ' + ne.textContent.trim());
-      downloadProjectFolder(g, lastPrompt);
-      const b = gid('btnExport'); b.classList.add('active'); setTimeout(() => b.classList.remove('active'), 1200);
-    });
-    gid('btnExportPdf').addEventListener('click', exportPdf);
-    gid('btnDownloadMd').addEventListener('click', downloadMarkdownGuide);
-    gid('btnCopyCode').addEventListener('click', async () => {
-      const btn = gid('btnCopyCode');
-      try {
-        await copyAllCodeBlocks();
-        btn.textContent = 'Copied';
-        setTimeout(() => { btn.textContent = '📋 Copy All Code'; }, 1200);
-      } catch {
-        btn.textContent = 'Copy failed';
-        setTimeout(() => { btn.textContent = '📋 Copy All Code'; }, 1200);
-      }
-    });
-    gid('btnSettings').addEventListener('click', () => { _settingsTrigger = document.activeElement; openSettings(); });
-    gid('btnLogout').addEventListener('click', logout);
-    gid('btnDelete').addEventListener('click', () => { if (!lastGuide) return; showDeleteConfirm(getProjectName({ guide: lastGuide, prompt: lastPrompt }), lastGuide, () => deleteFromHist(lastTs, null)); });
-
-    /* Delete modal */
-    gid('delModalDownload').addEventListener('click', () => { if (_del.guide && _del.prompt) downloadProjectFolder(_del.guide, _del.prompt); });
-    gid('delModalConfirm').addEventListener('click', () => { if (_del.cb) _del.cb(); closeDelModal(); });
-    gid('delModalCancel').addEventListener('click', closeDelModal);
-    gid('delModalBg').addEventListener('click', e => { if (e.target === gid('delModalBg')) closeDelModal(); });
-    document.addEventListener('keydown', e => { if (e.key === 'Escape' && gid('delModalBg').classList.contains('open')) { e.stopPropagation(); closeDelModal(); } }, { capture: true });
-
-    /* Selection bars */
-    gid('heroSelDel').addEventListener('click', bulkDelete);
-    gid('heroSelClear').addEventListener('click', clearSelection);
-    gid('histSelDel').addEventListener('click', bulkDelete);
-    gid('histSelClear').addEventListener('click', clearSelection);
-
-    /* Ctrl+A to select all */
-    document.addEventListener('keydown', e => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-        const histOpen = histPanel.classList.contains('open');
-        const heroVis = heroActive;
-        if (histOpen || heroVis) {
-          e.preventDefault();
-          const h = getHist();
-          const slice = histOpen ? h : h.slice(0, 5);
-          slice.forEach(item => selectedTs.add(item.ts));
-          updateSelState();
-        }
-      }
-    });
-
-    /* Chat collapse */
-    chatToggle.addEventListener('click', () => { chatPane.classList.toggle('collapsed'); if (!chatPane.classList.contains('collapsed')) chatInput.focus(); });
-
-    /* Focus traps */
-    modalBg.addEventListener('keydown', e => { if (e.key === 'Tab') trapFocus(modalBg.querySelector('.modal'), e); });
-    gid('delModalBg').addEventListener('keydown', e => { if (e.key === 'Tab') trapFocus(gid('delModalBg').querySelector('.del-modal'), e); });
-
-    /* Settings modal */
-    modalCloseBtn.addEventListener('click', closeSettings);
-    modalBg.addEventListener('click', e => { if (e.target === modalBg) closeSettings(); });
-
-    /* Clarify overlay */
-    gid('clarifySkip').addEventListener('click', skipClarify);
-    gid('clarifyBg').addEventListener('click', e => { if (e.target === gid('clarifyBg')) skipClarify(); });
-    gid('clarifyBg').addEventListener('keydown', e => { if (e.key === 'Tab') trapFocus(gid('clarifyBg').querySelector('.clarify-card'), e); });
-
-    /* Keyboard shortcuts */
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') {
-        if (modalBg.classList.contains('open')) { closeSettings(); return; }
-        if (gid('clarifyBg').classList.contains('open')) { skipClarify(); return; }
-        if (histPanel.classList.contains('open')) { histPanel.classList.remove('open'); return; }
-        if (generating && controller) { controller.abort(); return; }
-      }
-    });
-    document.addEventListener('click', e => {
-      if (histPanel.classList.contains('open') && !histPanel.contains(e.target) && !e.target.closest('#btnHistory')) {
-        histPanel.classList.remove('open');
-      }
-    });
-
-    /* Theme, skill, age, font */
-    themeGrid.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => applyTheme(c.dataset.theme)));
-    document.querySelectorAll('.hero-skill').forEach(b => b.addEventListener('click', () => applySkill(Number(b.dataset.skill))));
-    skillGrid.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => applySkill(Number(b.dataset.skill))));
-    ageSlider.addEventListener('input', () => applyAge(Number(ageSlider.value)));
-    fontSlider.addEventListener('input', () => applyFontScale(Number(fontSlider.value)));
-    saveKeyBtn.addEventListener('click', saveKey);
-    keyInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveKey(); });
-
-    /* Profile + account event listeners */
-    gid('profileSaveBtn').addEventListener('click', () => {
-      profileName = gid('profileNameInput').value;
-      profileBio = gid('profileBioInput').value;
-      profileAvatar = gid('profileAvatarInput').value;
-      saveProfile();
-    });
-    gid('pwSaveBtn').addEventListener('click', () => {
-      pwCurrent = gid('pwCurrentInput').value;
-      pwNew = gid('pwNewInput').value;
-      pwConfirm = gid('pwConfirmInput').value;
-      changePassword();
-    });
-    gid('emailSaveBtn').addEventListener('click', () => {
-      emailNew = gid('emailNewInput').value;
-      emailPw = gid('emailPwInput').value;
-      changeEmail();
-    });
-    gid('syncNowBtn').addEventListener('click', () => initSync());
-
-    /* History search */
-    gid('histSearch').addEventListener('input', e => {
-      const q = e.target.value.trim().toLowerCase();
-      histList.querySelectorAll('.hist-item').forEach(el => {
-        el.style.display = q && !el.textContent.toLowerCase().includes(q) ? 'none' : '';
-      });
-    });
-
-    /* Init sequence */
-    applyTheme(localStorage.getItem('mrt-theme') || 'solder');
-    applySkill(Number(localStorage.getItem('mrt-skill')) || 1);
-    applyAge(Number(localStorage.getItem('mrt-age')) || 25);
-    applyFontScale(Number(localStorage.getItem('mrt-font-scale')) || 100);
-    renderHist();
-    renderHeroRecent();
-    checkKey();
-    updateHeroBuildState();
-    heroInput.focus();
-
-  });
-
-  /* ── Auth Functions ── */
-  async function handleLogin() {
-    if (!loginEmail || !loginPassword) {
-      authError = 'Email and password are required';
-      return;
-    }
-
-    authLoading = true;
-    authError = '';
-
-    const result = await login(loginEmail, loginPassword);
-    
-    if (result.success) {
-      showLoginModal = false;
-      loginEmail = '';
-      loginPassword = '';
-    } else {
-      authError = result.error || 'Login failed';
-    }
-
-    authLoading = false;
-  }
-
-  async function handleRegister() {
-    if (!registerEmail || !registerUsername || !registerPassword || !registerConfirmPassword) {
-      authError = 'All fields are required';
-      return;
-    }
-
-    if (registerPassword !== registerConfirmPassword) {
-      authError = 'Passwords do not match';
-      return;
-    }
-
-    if (registerPassword.length < 8) {
-      authError = 'Password must be at least 8 characters';
-      return;
-    }
-
-    authLoading = true;
-    authError = '';
-
-    const result = await register(registerEmail, registerUsername, registerPassword);
-    
-    if (result.success) {
-      showRegisterModal = false;
-      registerEmail = '';
-      registerUsername = '';
-      registerPassword = '';
-      registerConfirmPassword = '';
-    } else {
-      authError = result.error || 'Registration failed';
-    }
-
-    authLoading = false;
-  }
-
-  async function handleLogout() {
-    await logout();
-  }
-
-  function openLogin() {
-    showLoginModal = true;
-    showRegisterModal = false;
-    authError = '';
-  }
-
-  function openRegister() {
-    showRegisterModal = true;
-    showLoginModal = false;
-    authError = '';
-  }
+  const values = [
+    { icon: Target, title: 'Accessibility First', desc: 'Electronics should be approachable for everyone' },
+    { icon: Wrench, title: 'Practical Results', desc: 'Every output should be buildable in the real world' },
+    { icon: Rocket, title: 'Continuous Innovation', desc: 'Always adding new components and features' },
+    { icon: Handshake, title: 'Community Driven', desc: 'Features based on what builders actually need' }
+  ];
 </script>
 
-<!-- ═══ HERO ═══ -->
-<div class="hero" id="hero">
-  <!-- Floating clouds -->
-  <div class="hero-clouds">
-    {#each cloudProps as c, i}
-      <div class="cloud {c.cls}"
-           role="button"
-           tabindex="0"
-           on:animationiteration={() => rotateCloudIdea(i)}
-           on:click={() => { heroInput.value = c.idea; send(c.idea); }}
-           on:keydown={e => { if (e.key === 'Enter' || e.key === ' ') { heroInput.value = c.idea; send(c.idea); } }}
-      >
-        <div class="cloud-rect cloud-rect-a"></div>
-        <div class="cloud-rect cloud-rect-b"></div>
-        <div class="cloud-label">
-          {c.idea}
-          <span class="cloud-label-hint">CLICK TO BUILD</span>
+<div class="about-page">
+  <!-- Hero -->
+  <section class="about-hero">
+    <div class="hero-container">
+      <div class="hero-content">
+        <div class="hero-badge">OUR STORY</div>
+        <h1 class="hero-title">Building the Future of Electronics Education</h1>
+        <p class="hero-subtitle">
+          Mertle.bot started as a weekend hack in June 2025 and has grown into the most comprehensive hardware assistant on the web. We're on a mission to make electronics accessible to everyone.
+        </p>
+        <div class="hero-actions">
+          <a href="/build" class="cta-btn primary">
+            <span class="btn-icon"><Rocket size={16} /></span>
+            <span class="btn-text">START BUILDING</span>
+          </a>
+          <a href="#about" class="cta-btn secondary">
+            <span class="btn-text">LEARN MORE</span>
+          </a>
         </div>
-      </div>
-    {/each}
-  </div>
-  <div class="hero-card">
-    <div class="hero-title">mertle.bot</div>
-    <div class="hero-tag">describe it. build it.</div>
-    <div class="hero-desc">Describe any electronics project and get a complete wiring diagram, parts list, and ready-to-flash code — instantly.</div>
-    <div class="hero-input-row">
-      <input class="hero-input" id="heroInput" type="text" placeholder="e.g. motion-sensing alarm..." autocomplete="new-password" spellcheck="false" maxlength="300" aria-label="Describe your electronics project"/>
-      <button type="button" class="hero-go" id="heroGo" disabled>BUILD</button>
-    </div>
-    <div class="hero-prompt-hint" id="heroPromptHint">Describe your project in at least 10 characters.</div>
-    <div class="hero-examples" id="heroExamples">
-      {#each HERO_EXAMPLES as example}
-        <button type="button" class="hero-example-chip" data-prompt={example}>{example}</button>
-      {/each}
-    </div>
-    <div class="hero-hint">SELECT SKILL LEVEL</div>
-    <div class="hero-skills" id="heroSkills">
-      <button type="button" class="hero-skill active" data-skill="1">MONKEY</button>
-      <button type="button" class="hero-skill" data-skill="2">NOVICE</button>
-      <button type="button" class="hero-skill" data-skill="3">BUILDER</button>
-      <button type="button" class="hero-skill" data-skill="4">HACKER</button>
-      <button type="button" class="hero-skill" data-skill="5">EXPERT</button>
-    </div>
-    <div class="hero-skill-help" id="heroSkillHelp">Maximum hand-holding, no experience needed.</div>
-    <div class="hero-recent" id="heroRecent"></div>
-    <div class="sel-bar" id="heroSelBar">
-      <span class="sel-count" id="heroSelCount"></span>
-      <button type="button" class="sel-clear-btn" id="heroSelClear">CLEAR</button>
-      <button type="button" class="sel-del-btn" id="heroSelDel">DELETE</button>
-    </div>
-  </div>
-</div>
-
-<!-- ═══ APP SHELL ═══ -->
-<div class="app">
-  <div class="stage">
-    <!-- top bar -->
-    <div class="topbar" role="banner">
-      <span class="topbar-logo">mertle.bot</span>
-      <div class="topbar-sep"></div>
-      <button type="button" class="topbar-btn" id="btnNew" title="New">
-        <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      </button>
-      <button type="button" class="topbar-btn" id="btnHistory" title="History">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12,7 12,12 16,14"/></svg>
-      </button>
-      <button type="button" class="topbar-btn" id="btnExport" title="Download guide">
-        <svg viewBox="0 0 24 24"><path d="M21,15v4a2,2 0 0,1-2,2H5a2,2 0 0,1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      </button>
-      <button type="button" class="topbar-btn" id="btnDelete" title="Delete project" style="display:none">
-        <svg viewBox="0 0 24 24"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14a2,2 0 0,1-2,2H8a2,2 0 0,1-2-2L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4a1,1 0 0,1,1-1h4a1,1 0 0,1,1,1v2"/></svg>
-      </button>
-      <span class="status-spacer"></span>
-      <span class="status-dot" id="statusDot"></span>
-      <span class="status-label" id="statusText" aria-live="polite">READY</span>
-      <span class="status-skill" id="statusSkill"></span>
-      <div class="topbar-sep"></div>
-      
-      <!-- Auth buttons -->
-      {#if $authStore.user}
-        <div class="topbar-user">
-          <span class="topbar-username">{$authStore.user.username}</span>
-          <button type="button" class="topbar-btn" title="Logout" on:click={handleLogout}>
-            <svg viewBox="0 0 24 24"><path d="M10 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-          </button>
-        </div>
-      {:else}
-        <button type="button" class="topbar-btn" title="Login" on:click={openLogin}>
-          <svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-        </button>
-        <button type="button" class="topbar-btn" title="Register" on:click={openRegister}>
-          <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
-        </button>
-      {/if}
-      
-      <div class="topbar-sep"></div>
-      <button type="button" class="topbar-btn" id="btnSettings" title="Settings">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4,15a1.65,1.65 0 0,0,.33,1.82l.06,.06a2,2 0 1,1-2.83,2.83l-.06-.06a1.65,1.65 0 0,0-1.82-.33 1.65,1.65 0 0,0-1,1.51V21a2,2 0 0,1-4,0v-.09A1.65,1.65 0 0,0 9,19.4a1.65,1.65 0 0,0-1.82,.33l-.06,.06a2,2 0 1,1-2.83-2.83l.06-.06A1.65,1.65 0 0,0 4.68,15a1.65,1.65 0 0,0-1.51-1H3a2,2 0 0,1 0-4h.09A1.65,1.65 0 0,0 4.6,9a1.65,1.65 0 0,0-.33-1.82l-.06-.06a2,2 0 1,1 2.83-2.83l.06,.06A1.65,1.65 0 0,0 9,4.68a1.65,1.65 0 0,0 1-1.51V3a2,2 0 0,1 4,0v.09a1.65,1.65 0 0,0 1,1.51 1.65,1.65 0 0,0 1.82-.33l.06-.06a2,2 0 1,1 2.83,2.83l-.06,.06A1.65,1.65 0 0,0 19.4,9a1.65,1.65 0 0,0 1.51,1H21a2,2 0 0,1 0,4h-.09A1.65,1.65 0 0,0 19.4,15z"/></svg>
-      </button>
-      <button type="button" class="topbar-btn" id="btnLogout" title="Sign out">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-      </button>
-    </div>
-
-    <!-- workspace -->
-    <main class="workspace no-build">
-      <!-- chat -->
-      <section class="chat">
-        <div class="chat-head"><span class="pane-label">conversation</span><button type="button" class="chat-toggle" id="chatToggle" aria-label="Toggle chat">&#9664;</button></div>
-        <div class="chat-log" id="chatLog">
-          <div class="msg bot"><div class="msg-who">MERTLE.BOT</div><div class="msg-body">Ready. Describe any hardware project to get started.</div></div>
-        </div>
-        <footer class="composer">
-          <div class="composer-inner">
-            <input class="composer-field" id="chatInput" type="text" placeholder="describe a project or ask to edit..." autocomplete="new-password" spellcheck="false" maxlength="300" aria-label="Chat message"/>
-            <button type="button" class="composer-send" id="sendBtn">SEND</button>
+        <div class="hero-stats">
+          <div class="stat">
+            <div class="stat-value">2025</div>
+            <div class="stat-label">FOUNDED</div>
           </div>
-          <div class="composer-meta">
-            <span class="composer-count" id="charCount">0/300</span>
+          <div class="stat">
+            <div class="stat-value">99.9%</div>
+            <div class="stat-label">ACCURACY</div>
           </div>
-        </footer>
-      </section>
-
-      <!-- output -->
-      <section class="output">
-        <div class="output-head">
-          <span class="pane-label">build output</span>
-          <div class="output-head-actions">
-            <button type="button" class="output-head-btn" id="btnExportPdf">📄 Export PDF</button>
-            <button type="button" class="output-head-btn" id="btnDownloadMd">⬇️ Download Markdown</button>
-            <button type="button" class="output-head-btn" id="btnCopyCode">📋 Copy All Code</button>
-          </div>
-          <span class="output-context" id="outputContext"></span>
         </div>
-        <div class="output-scroll" id="outputScroll">
-          <div class="loading-feed" id="loadingFeed" hidden></div>
-          <div class="empty" id="emptyState">
-            <div class="empty-icon"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10"/></svg></div>
-            <div class="empty-title">NO BUILD YET</div>
-            <div class="empty-hint">Type a project description in the chat to generate your first build guide.</div>
-          </div>
-          <div class="build" id="buildOutput"></div>
+      </div>
+      <div class="hero-visual">
+        <div class="visual-card">
+          <div class="visual-icon"><Bot size={64} strokeWidth={2.5} /></div>
+          <div class="visual-text">MERTLE.BOT</div>
+          <div class="visual-tag">wiring wizards since 2025</div>
         </div>
-      </section>
-    </main>
-  </div>
-</div>
-
-<!-- ═══ HISTORY ═══ -->
-<div class="hist" id="histPanel">
-  <div class="hist-head">
-    <span class="hist-title">Build History</span>
-    <span class="hist-sync-dot" id="histSyncDot" title="Cloud sync status"></span>
-    <button type="button" class="hist-close" id="histClose" aria-label="Close">&times;</button>
-  </div>
-  <div class="hist-search-row">
-    <input class="hist-search" id="histSearch" type="search" placeholder="Search projects..." autocomplete="off" aria-label="Search build history"/>
-  </div>
-  <div class="hist-list" id="histList">
-    <div class="hist-empty">No builds yet</div>
-  </div>
-  <div class="sel-bar" id="histSelBar">
-    <span class="sel-count" id="histSelCount"></span>
-    <button type="button" class="sel-clear-btn" id="histSelClear">CLEAR</button>
-    <button type="button" class="sel-del-btn" id="histSelDel">DELETE</button>
-  </div>
-</div>
-
-<!-- ═══ DELETE CONFIRM ═══ -->
-<div class="del-modal-bg" id="delModalBg">
-  <div class="del-modal" role="dialog" aria-modal="true" aria-labelledby="delModalTitle">
-    <div class="del-modal-title" id="delModalTitle">Delete Project?</div>
-    <div class="del-modal-prompt" id="delModalPrompt"></div>
-    <div class="del-modal-btns">
-      <button type="button" class="del-modal-btn cancel" id="delModalCancel">CANCEL</button>
-      <button type="button" class="del-modal-btn dl" id="delModalDownload">DOWNLOAD</button>
-      <button type="button" class="del-modal-btn danger" id="delModalConfirm">DELETE</button>
-    </div>
-  </div>
-</div>
-
-<!-- ═══ SETTINGS MODAL ═══ -->
-<div class="modal-bg" id="modalBg">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
-    <div class="modal-title" id="settingsModalTitle">SETTINGS</div>
-    <div class="modal-section">
-      <div class="modal-label">Anthropic API Key</div>
-      <div class="modal-hint" style="margin-bottom:10px;line-height:1.5">mertle.bot uses the Claude API to generate build guides. Your key is stored only on this machine and sent only to Anthropic.</div>
-      <div class="modal-input-row"><input class="modal-input" id="keyInput" type="password" placeholder="Paste your sk-ant-... key here" autocomplete="off"/></div>
-      <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
-        <button type="button" class="modal-btn" id="saveKeyBtn">SAVE KEY</button>
-        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" class="modal-hint" style="text-decoration:none;border-bottom:1px solid var(--text-muted)">Get a free API key &rarr;</a>
-      </div>
-      <div class="modal-error" id="keyStatus"></div>
-    </div>
-    <div class="modal-divider"></div>
-    <div class="modal-section">
-      <div class="modal-label">Skill Level</div>
-      <div class="chip-grid" id="skillGrid">
-        <button type="button" class="chip" data-skill="1">Monkey</button>
-        <button type="button" class="chip" data-skill="2">Novice</button>
-        <button type="button" class="chip" data-skill="3">Builder</button>
-        <button type="button" class="chip" data-skill="4">Hacker</button>
-        <button type="button" class="chip" data-skill="5">Expert</button>
-      </div>
-      <div class="modal-hint" id="skillHelpModal">Maximum hand-holding, no experience needed.</div>
-    </div>
-    <div class="modal-divider"></div>
-    <div class="modal-section">
-      <div class="modal-label">Theme</div>
-      <div class="chip-grid" id="themeGrid">
-        <button type="button" class="chip" data-theme="deep-sea">Deep Sea</button>
-        <button type="button" class="chip" data-theme="phosphor">Phosphor</button>
-        <button type="button" class="chip" data-theme="amber">Amber</button>
-        <button type="button" class="chip" data-theme="arctic">Arctic</button>
-        <button type="button" class="chip" data-theme="sakura">Sakura</button>
-        <button type="button" class="chip active" data-theme="solder">Solder</button>
       </div>
     </div>
-    <div class="modal-divider"></div>
-    <div class="modal-section">
-      <div class="modal-label">Age</div>
-      <div class="modal-slider-row"><input class="modal-slider" id="ageSlider" type="range" min="6" max="60" step="1" value="25"/><span class="modal-val" id="ageVal">25</span></div>
-    </div>
-    <div class="modal-divider"></div>
-    <div class="modal-section">
-      <div class="modal-label">Font Size</div>
-      <div class="modal-slider-row"><input class="modal-slider" id="fontSlider" type="range" min="80" max="200" step="10" value="100"/><span class="modal-val" id="fontVal">100%</span></div>
-    </div>
-    <div class="modal-divider"></div>
+  </section>
 
-    <!-- Profile section -->
-    <div class="modal-section">
-      <div class="modal-label">Profile</div>
-      <div class="modal-hint" style="margin-bottom:6px">Signed in as <span id="profileEmailDisplay" style="color:var(--primary)">{profileEmail}</span></div>
-      <div class="modal-input-row"><input class="modal-input" type="text" id="profileNameInput" placeholder="Display name" maxlength="80" autocomplete="off"/></div>
-      <div class="modal-input-row" style="margin-top:6px"><input class="modal-input" type="url" id="profileAvatarInput" placeholder="Avatar URL (https://...)" maxlength="500" autocomplete="off"/></div>
-      <div class="modal-input-row" style="margin-top:6px"><textarea class="modal-input" id="profileBioInput" placeholder="Short bio (optional)" maxlength="500" rows="3" style="resize:vertical;min-height:60px"></textarea></div>
-      <button type="button" class="modal-btn" id="profileSaveBtn" style="margin-top:6px">SAVE PROFILE</button>
-      {#if profileError}<div class="modal-error" style="margin-top:4px">{profileError}</div>{/if}
-      {#if profileOk}<div class="modal-error" style="color:var(--primary);margin-top:4px">{profileOk}</div>{/if}
-    </div>
-
-    <div class="modal-divider"></div>
-
-    <!-- Notifications section -->
-    <div class="modal-section">
-      <div class="modal-label">Notifications</div>
-      <label class="modal-toggle-row">
-        <input type="checkbox" id="notifBuildInput" bind:checked={notifEmailBuild}/>
-        <span class="modal-toggle-label">Email when build complete</span>
-      </label>
-      <label class="modal-toggle-row">
-        <input type="checkbox" id="notifDigestInput" bind:checked={notifEmailDigest}/>
-        <span class="modal-toggle-label">Weekly project digest</span>
-      </label>
-    </div>
-
-    <div class="modal-divider"></div>
-
-    <!-- Account section: change email -->
-    <div class="modal-section">
-      <div class="modal-label">Change Email</div>
-      <div class="modal-input-row"><input class="modal-input" type="email" id="emailNewInput" placeholder="New email address" maxlength="254" autocomplete="off"/></div>
-      <div class="modal-input-row" style="margin-top:6px"><input class="modal-input" type="password" id="emailPwInput" placeholder="Current password" autocomplete="current-password"/></div>
-      <button type="button" class="modal-btn" id="emailSaveBtn" style="margin-top:6px">UPDATE EMAIL</button>
-      {#if emailError}<div class="modal-error" style="margin-top:4px">{emailError}</div>{/if}
-      {#if emailOk}<div class="modal-error" style="color:var(--primary);margin-top:4px">{emailOk}</div>{/if}
-    </div>
-
-    <div class="modal-divider"></div>
-
-    <!-- Account section: change password -->
-    <div class="modal-section">
-      <div class="modal-label">Change Password</div>
-      <div class="modal-input-row"><input class="modal-input" type="password" id="pwCurrentInput" placeholder="Current password" autocomplete="current-password"/></div>
-      <div class="modal-input-row" style="margin-top:6px"><input class="modal-input" type="password" id="pwNewInput" placeholder="New password (min 8 chars)" autocomplete="new-password"/></div>
-      <div class="modal-input-row" style="margin-top:6px"><input class="modal-input" type="password" id="pwConfirmInput" placeholder="Confirm new password" autocomplete="new-password"/></div>
-      <button type="button" class="modal-btn" id="pwSaveBtn" style="margin-top:6px">CHANGE PASSWORD</button>
-      {#if pwError}<div class="modal-error" style="margin-top:4px">{pwError}</div>{/if}
-      {#if pwOk}<div class="modal-error" style="color:var(--primary);margin-top:4px">{pwOk}</div>{/if}
-    </div>
-
-    <div class="modal-divider"></div>
-
-    <!-- Sync status -->
-    <div class="modal-section">
-      <div class="modal-label">Cloud Sync</div>
-      <div class="modal-hint">
-        {#if syncStatus === 'syncing'}Syncing...{:else if syncStatus === 'synced'}Projects synced{:else if syncStatus === 'error'}Sync failed — will retry on next visit{:else}Not synced yet{/if}
+  <!-- Mission -->
+  <section id="about" class="mission-section">
+    <div class="section-container">
+      <div class="section-header">
+        <div class="section-badge">OUR MISSION</div>
+        <h2 class="section-title">Democratizing Hardware Creation</h2>
+        <p class="section-subtitle">
+          We believe anyone should be able to bring their electronics ideas to life — no engineering degree required.
+        </p>
       </div>
-      <button type="button" class="modal-btn" id="syncNowBtn" style="margin-top:6px">SYNC NOW</button>
-    </div>
 
-    <button type="button" class="modal-close-btn" id="modalCloseBtn">CLOSE</button>
-  </div>
-</div>
-
-<!-- ═══ CLARIFY OVERLAY ═══ -->
-<div class="clarify-bg" id="clarifyBg">
-  <div class="clarify-card" role="dialog" aria-modal="true" aria-label="A few quick questions">
-    <div class="clarify-header">
-      <div class="clarify-title">ONE SEC</div>
-      <button type="button" class="clarify-skip" id="clarifySkip">SKIP &gt;&gt; BUILD NOW</button>
-    </div>
-    <div class="clarify-inner" id="clarifyInner"></div>
-  </div>
-</div>
-
-<!-- ═══ AUTH MODALS ═══ -->
-{#if showLoginModal}
-<div class="modal-bg" id="loginModalBg">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
-    <div class="modal-title" id="loginModalTitle">LOGIN</div>
-    <div class="modal-section">
-      {#if authError}
-        <div class="modal-error">{authError}</div>
-      {/if}
-      <div class="modal-label">Email</div>
-      <input class="modal-input" type="email" placeholder="your@email.com" bind:value={loginEmail} disabled={authLoading}/>
-      <div class="modal-label">Password</div>
-      <input class="modal-input" type="password" placeholder="••••••••" bind:value={loginPassword} disabled={authLoading}/>
-      <button type="button" class="modal-btn" on:click={handleLogin} disabled={authLoading}>
-        {#if authLoading}LOGGING IN...{:else}LOGIN{/if}
-      </button>
-      <div class="modal-hint">
-        Don't have an account? <button type="button" class="link-btn" on:click={() => { showLoginModal = false; showRegisterModal = true; }}>Register</button>
+      <div class="values-grid">
+        {#each values as value}
+          <div class="value-card">
+            <div class="value-icon"><svelte:component this={value.icon} size={40} /></div>
+            <h3 class="value-title">{value.title}</h3>
+            <p class="value-desc">{value.desc}</p>
+          </div>
+        {/each}
       </div>
     </div>
-    <button type="button" class="modal-close-btn" on:click={() => showLoginModal = false}>CLOSE</button>
-  </div>
-</div>
-{/if}
+  </section>
 
-{#if showRegisterModal}
-<div class="modal-bg" id="registerModalBg">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="registerModalTitle">
-    <div class="modal-title" id="registerModalTitle">REGISTER</div>
-    <div class="modal-section">
-      {#if authError}
-        <div class="modal-error">{authError}</div>
-      {/if}
-      <div class="modal-label">Email</div>
-      <input class="modal-input" type="email" placeholder="your@email.com" bind:value={registerEmail} disabled={authLoading}/>
-      <div class="modal-label">Username</div>
-      <input class="modal-input" type="text" placeholder="maker123" bind:value={registerUsername} disabled={authLoading}/>
-      <div class="modal-label">Password</div>
-      <input class="modal-input" type="password" placeholder="••••••••" bind:value={registerPassword} disabled={authLoading}/>
-      <div class="modal-label">Confirm Password</div>
-      <input class="modal-input" type="password" placeholder="••••••••" bind:value={registerConfirmPassword} disabled={authLoading}/>
-      <button type="button" class="modal-btn" on:click={handleRegister} disabled={authLoading}>
-        {#if authLoading}CREATING ACCOUNT...{:else}REGISTER{/if}
-      </button>
-      <div class="modal-hint">
-        Already have an account? <button type="button" class="link-btn" on:click={() => { showRegisterModal = false; showLoginModal = true; }}>Login</button>
+  <!-- How It Works -->
+  <section class="team-section">
+    <div class="section-container">
+      <div class="section-header">
+        <div class="section-badge">HOW IT WORKS</div>
+        <h2 class="section-title">From Idea to Circuit in Seconds</h2>
+        <p class="section-subtitle">
+          No engineering degree. No prior experience. Just describe what you want to build.
+        </p>
+      </div>
+
+      <div class="team-grid">
+        {#each howItWorks as item}
+          <div class="team-card primary">
+            <div class="team-avatar"><svelte:component this={item.icon} size={48} /></div>
+            <div class="team-name">{item.step}</div>
+            <div class="team-role">{item.title}</div>
+            <div class="team-desc">{item.desc}</div>
+          </div>
+        {/each}
       </div>
     </div>
-    <button type="button" class="modal-close-btn" on:click={() => showRegisterModal = false}>CLOSE</button>
-  </div>
+  </section>
+
+  <!-- Timeline -->
+  <section class="timeline-section">
+    <div class="section-container">
+      <div class="section-header">
+        <div class="section-badge">OUR JOURNEY</div>
+        <h2 class="section-title">From Idea to Indispensable Tool</h2>
+      </div>
+
+      <div class="timeline">
+        {#each timeline as item, i}
+          <div class="timeline-item">
+            <div class="timeline-year">{item.year}</div>
+            <div class="timeline-content">
+              <div class="timeline-title">{item.title}</div>
+              <div class="timeline-desc">{item.desc}</div>
+            </div>
+          </div>
+        {/each}
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-section">
+    <div class="cta-container">
+      <div class="cta-card">
+        <h2 class="cta-title">Join the Electronics Revolution</h2>
+        <p class="cta-desc">
+          Whether you're a complete beginner or seasoned engineer, Mertle.bot has something for you.
+        </p>
+        <div class="cta-actions">
+          <a href="/build" class="cta-btn primary">
+            <span class="btn-icon"><Rocket size={16} /></span>
+            <span class="btn-text">START BUILDING</span>
+          </a>
+          <a href="/contact" class="cta-btn secondary">
+            <span class="btn-icon"><Mail size={16} /></span>
+            <span class="btn-text">GET IN TOUCH</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
 </div>
-{/if}
+
+<style>
+  .about-page {
+    overflow: hidden;
+  }
+
+  /* Hero */
+  .about-hero {
+    padding: 80px 20px;
+    background: var(--bg);
+  }
+
+  .hero-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 60px;
+    align-items: center;
+  }
+
+  .hero-badge {
+    display: inline-block;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 8px;
+    color: var(--primary);
+    letter-spacing: 2px;
+    padding: 8px 16px;
+    background: var(--surface);
+    border: 2px solid var(--primary);
+    margin-bottom: 24px;
+    -webkit-font-smoothing: none;
+  }
+
+  .hero-title {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 32px;
+    color: var(--text);
+    margin-bottom: 20px;
+    line-height: 1.3;
+    -webkit-font-smoothing: none;
+  }
+
+  .hero-subtitle {
+    font-size: calc(16px * var(--fs, 1));
+    color: var(--text-muted);
+    line-height: 1.7;
+    margin-bottom: 32px;
+    max-width: 500px;
+  }
+
+  .hero-actions {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 40px;
+  }
+
+  .hero-stats {
+    display: flex;
+    gap: 30px;
+  }
+
+  .stat {
+    text-align: center;
+  }
+
+  .stat-value {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 28px;
+    color: var(--primary);
+    margin-bottom: 8px;
+    -webkit-font-smoothing: none;
+  }
+
+  .stat-label {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 8px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+    -webkit-font-smoothing: none;
+  }
+
+  .hero-visual {
+    display: flex;
+    justify-content: center;
+  }
+
+  .visual-card {
+    padding: 40px;
+    background: var(--surface);
+    border: 4px solid var(--primary);
+    box-shadow: 8px 8px 0 rgba(0,0,0,0.55);
+    text-align: center;
+    animation: voxel-bob 4s ease-in-out infinite;
+  }
+
+  .visual-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 20px;
+    color: var(--primary);
+    filter: drop-shadow(4px 4px 0 rgba(0,0,0,0.4));
+  }
+
+  .visual-text {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 20px;
+    color: var(--primary);
+    margin-bottom: 12px;
+    -webkit-font-smoothing: none;
+  }
+
+  .visual-tag {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 9px;
+    color: var(--text-muted);
+    letter-spacing: 2px;
+    -webkit-font-smoothing: none;
+  }
+
+  /* Section Container */
+  .section-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+
+  /* Mission Section */
+  .mission-section {
+    padding: 100px 0;
+    background: var(--surface);
+    scroll-margin-top: 80px;
+  }
+
+  .section-header {
+    text-align: center;
+    margin-bottom: 60px;
+  }
+
+  .section-badge {
+    display: inline-block;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 8px;
+    color: var(--primary);
+    letter-spacing: 2px;
+    padding: 8px 16px;
+    background: var(--surface2);
+    border: 2px solid var(--primary);
+    margin-bottom: 20px;
+    -webkit-font-smoothing: none;
+  }
+
+  .section-title {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 24px;
+    color: var(--text);
+    margin-bottom: 16px;
+    -webkit-font-smoothing: none;
+  }
+
+  .section-subtitle {
+    font-size: calc(16px * var(--fs, 1));
+    color: var(--text-muted);
+    max-width: 600px;
+    margin: 0 auto;
+    line-height: 1.6;
+  }
+
+  .values-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 30px;
+  }
+
+  .value-card {
+    padding: 30px;
+    background: var(--surface2);
+    border: 3px solid var(--border-col);
+    box-shadow: 4px 4px 0 rgba(0,0,0,0.4);
+    transition: transform 0.2s var(--spring), border-color 0.2s;
+  }
+
+  .value-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--primary);
+  }
+
+  .value-icon {
+    display: flex;
+    align-items: center;
+    margin-bottom: 20px;
+    color: var(--primary);
+    filter: drop-shadow(2px 2px 0 rgba(0,0,0,0.4));
+  }
+
+  .value-title {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 14px;
+    color: var(--primary);
+    margin-bottom: 12px;
+    -webkit-font-smoothing: none;
+  }
+
+  .value-desc {
+    font-size: calc(14px * var(--fs, 1));
+    color: var(--text);
+    line-height: 1.6;
+  }
+
+  /* Team Section */
+  .team-section {
+    padding: 100px 0;
+    background: var(--bg);
+  }
+
+  .team-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 30px;
+  }
+
+  .team-card {
+    padding: 30px;
+    background: var(--surface);
+    border: 3px solid var(--border-col);
+    box-shadow: 4px 4px 0 rgba(0,0,0,0.4);
+    text-align: center;
+    transition: transform 0.2s var(--spring);
+  }
+
+  .team-card:hover {
+    transform: translateY(-4px);
+  }
+
+  .team-card.primary {
+    border-color: var(--primary);
+  }
+
+  .team-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 20px;
+    color: var(--primary);
+    filter: drop-shadow(2px 2px 0 rgba(0,0,0,0.4));
+  }
+
+  .team-name {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 16px;
+    color: var(--text);
+    margin-bottom: 8px;
+    -webkit-font-smoothing: none;
+  }
+
+  .team-role {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 9px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+    letter-spacing: 1px;
+    -webkit-font-smoothing: none;
+  }
+
+  .team-desc {
+    font-size: calc(13px * var(--fs, 1));
+    color: var(--text);
+    line-height: 1.6;
+  }
+
+  /* Timeline Section */
+  .timeline-section {
+    padding: 100px 0;
+    background: var(--surface);
+  }
+
+  .timeline {
+    position: relative;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 30px;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--border-col);
+  }
+
+  .timeline-item {
+    position: relative;
+    margin-bottom: 40px;
+    padding-left: 60px;
+  }
+
+  .timeline-item:last-child {
+    margin-bottom: 0;
+  }
+
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: 24px;
+    top: 0;
+    width: 16px;
+    height: 16px;
+    background: var(--primary);
+    border: 3px solid var(--primary-dark);
+    box-shadow: 2px 2px 0 rgba(0,0,0,0.4);
+  }
+
+  .timeline-year {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 12px;
+    color: var(--primary);
+    margin-bottom: 12px;
+    -webkit-font-smoothing: none;
+  }
+
+  .timeline-content {
+    background: var(--surface2);
+    border: 3px solid var(--border-col);
+    padding: 20px;
+    box-shadow: 4px 4px 0 rgba(0,0,0,0.4);
+  }
+
+  .timeline-title {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 14px;
+    color: var(--primary);
+    margin-bottom: 12px;
+    -webkit-font-smoothing: none;
+  }
+
+  .timeline-desc {
+    font-size: calc(14px * var(--fs, 1));
+    color: var(--text);
+    line-height: 1.6;
+  }
+
+  /* CTA Section */
+  .cta-section {
+    padding: 100px 0;
+    background: var(--bg);
+  }
+
+  .cta-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+
+  .cta-card {
+    padding: 60px;
+    background: var(--surface);
+    border: 4px solid var(--cta);
+    box-shadow: 8px 8px 0 rgba(0,0,0,0.55);
+    text-align: center;
+  }
+
+  .cta-title {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 24px;
+    color: var(--cta-light);
+    margin-bottom: 20px;
+    -webkit-font-smoothing: none;
+  }
+
+  .cta-desc {
+    font-size: calc(16px * var(--fs, 1));
+    color: var(--text);
+    line-height: 1.7;
+    margin-bottom: 40px;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .cta-actions {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .cta-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 28px;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-decoration: none;
+    border: 3px solid;
+    cursor: pointer;
+    box-shadow: 4px 4px 0 rgba(0,0,0,0.4);
+    transition: transform 0.2s var(--spring), box-shadow 0.2s var(--spring),
+                background 0.2s, color 0.2s;
+    -webkit-font-smoothing: none;
+  }
+
+  .cta-btn.primary {
+    background: var(--cta);
+    border-color: var(--cta-dark);
+    color: #fff;
+  }
+
+  .cta-btn.primary:hover {
+    background: var(--cta-light);
+    transform: translateY(-4px);
+    box-shadow: 4px 8px 0 rgba(0,0,0,0.4);
+  }
+
+  .cta-btn.secondary {
+    background: var(--surface);
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+
+  .cta-btn.secondary:hover {
+    background: var(--primary);
+    color: var(--trunk);
+    transform: translateY(-4px);
+    box-shadow: 4px 8px 0 rgba(0,0,0,0.4);
+  }
+
+  .btn-icon {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* Responsive Design */
+  @media (max-width: 1024px) {
+    .hero-container {
+      grid-template-columns: 1fr;
+      gap: 40px;
+    }
+
+    .hero-title {
+      font-size: 28px;
+    }
+
+    .visual-card {
+      max-width: 400px;
+      margin: 0 auto;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .about-hero {
+      padding: 60px 20px;
+    }
+
+    .hero-title {
+      font-size: 24px;
+    }
+
+    .hero-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .hero-actions .cta-btn {
+      justify-content: center;
+    }
+
+    .hero-stats {
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .stat {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .stat-value {
+      margin-bottom: 0;
+    }
+
+    .values-grid,
+    .team-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .timeline::before {
+      left: 20px;
+    }
+
+    .timeline-item {
+      padding-left: 40px;
+    }
+
+    .timeline-item::before {
+      left: 14px;
+    }
+
+    .cta-actions {
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .cta-btn {
+      width: 100%;
+      max-width: 300px;
+      justify-content: center;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .hero-title {
+      font-size: 20px;
+    }
+
+    .hero-subtitle {
+      font-size: calc(14px * var(--fs, 1));
+    }
+
+    .section-title {
+      font-size: 20px;
+    }
+
+    .cta-card {
+      padding: 40px 20px;
+    }
+
+    .cta-title {
+      font-size: 20px;
+    }
+  }
+</style>

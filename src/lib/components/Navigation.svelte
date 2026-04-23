@@ -1,16 +1,12 @@
 <script>
   import { page } from '$app/state';
-  import { House, Zap, Info, Mail, BadgeDollarSign, Bot, Palette, Rocket, LogIn, UserPlus, LogOut, User } from 'lucide-svelte';
-  import { logout } from '$lib/auth-store.js';
+  import { House, Zap, Info, Mail, Bot, Palette, Rocket } from 'lucide-svelte';
 
-  let { auth } = $props();
-  
   const navItems = [
     { href: '/', label: 'HOME', icon: House },
     { href: '/build', label: 'BUILD', icon: Zap },
-    { href: '/about', label: 'ABOUT', icon: Info },
-    { href: '/contact', label: 'CONTACT', icon: Mail },
-    { href: '/pricing', label: 'PRICING', icon: BadgeDollarSign }
+    { href: '/#about', label: 'ABOUT', icon: Info },
+    { href: '/contact', label: 'CONTACT', icon: Mail }
   ];
 
   const THEMES = ['solder', 'deep-sea', 'phosphor', 'amber', 'arctic', 'sakura'];
@@ -21,20 +17,6 @@
     const next = THEMES[(idx + 1) % THEMES.length];
     document.documentElement.setAttribute('data-theme', next);
     try { localStorage.setItem('mrt-theme', next); } catch {}
-  }
-
-  async function handleLogout() {
-    await logout();
-  }
-
-  function openLogin() {
-    // This will be handled by the build page
-    window.location.href = '/build#login';
-  }
-
-  function openRegister() {
-    // This will be handled by the build page
-    window.location.href = '/build#register';
   }
 </script>
 
@@ -48,38 +30,26 @@
 
   <div class="nav-menu">
     {#each navItems as item}
+      {@const isActive = item.href.startsWith('/#')
+        ? (page.url.pathname === '/' && page.url.hash === item.href.slice(1))
+        : (page.url.pathname === item.href && !page.url.hash) || (page.url.pathname === '/build' && item.href === '/build')}
+      {@const Icon = item.icon}
       <a
         href={item.href}
-        class="nav-link {($page.url.pathname === item.href || ($page.url.pathname === '/build' && item.href === '/build')) ? 'active' : ''}"
-        aria-current={($page.url.pathname === item.href || ($page.url.pathname === '/build' && item.href === '/build')) ? 'page' : undefined}
+        class="nav-link {isActive ? 'active' : ''}"
+        aria-current={isActive ? 'page' : undefined}
       >
-        <span class="nav-icon"><svelte:component this={item.icon} size={14} /></span>
+        <span class="nav-icon"><Icon size={14} /></span>
         <span class="nav-label">{item.label}</span>
       </a>
     {/each}
   </div>
 
   <div class="nav-actions">
-    <button class="nav-action-btn" title="Toggle theme" on:click={cycleTheme}>
+    <button class="nav-action-btn" title="Toggle theme" onclick={cycleTheme}>
       <span class="action-icon"><Palette size={16} /></span>
     </button>
-    
-    {#if auth.user}
-      <div class="nav-user">
-        <span class="nav-username">{auth.user.username}</span>
-        <button class="nav-action-btn" title="Logout" on:click={handleLogout}>
-          <span class="action-icon"><LogOut size={16} /></span>
-        </button>
-      </div>
-    {:else}
-      <button class="nav-action-btn" title="Login" on:click={openLogin}>
-        <span class="action-icon"><LogIn size={16} /></span>
-      </button>
-      <button class="nav-action-btn" title="Register" on:click={openRegister}>
-        <span class="action-icon"><UserPlus size={16} /></span>
-      </button>
-    {/if}
-    
+
     <a href="/build" class="cta-btn">
       <span class="cta-icon"><Rocket size={14} /></span>
       <span class="cta-text">START BUILDING</span>
@@ -259,19 +229,6 @@
 
   .cta-text {
     font-size: 8px;
-  }
-
-  .nav-user {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .nav-username {
-    font-family: 'Press Start 2P', monospace;
-    font-size: 7px;
-    color: var(--text-muted);
-    -webkit-font-smoothing: none;
   }
 
   @media (max-width: 1024px) {

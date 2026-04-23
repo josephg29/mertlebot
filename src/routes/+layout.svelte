@@ -1,21 +1,13 @@
 <script>
   import '../app.css';
   import Navigation from '$lib/components/Navigation.svelte';
-  import { initAuth, authStore } from '$lib/auth-store.js';
-  import { onMount } from 'svelte';
-  
-  const { children, data } = $props();
-  
-  onMount(() => {
-    initAuth();
-  });
-  
-  let auth = $derived($authStore);
+
+  const { children } = $props();
 </script>
 
-<Navigation {auth} />
+<Navigation />
 <main class="site-content">
-  {@render children({ auth })}
+  {@render children()}
 </main>
 
 <style>
@@ -23,14 +15,14 @@
     flex: 1;
     overflow: auto;
   }
-  
+
   :global(body) {
     display: flex;
     flex-direction: column;
     min-height: 100vh;
     overflow: auto;
   }
-  
+
   :global(html) {
     overflow: auto;
   }

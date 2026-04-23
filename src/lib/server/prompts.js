@@ -263,6 +263,13 @@ export const SIM_PROMPT = [
   '- If the build guide uses ANY components not in the supported parts list above, respond with EXACTLY ONE LINE: UNSUPPORTED_PARTS: <comma-separated list of unsupported parts> — do NOT generate code blocks, do NOT substitute parts',
   '- The simulation must DO something visible -- blink LEDs, move servos, print serial output',
   '- DO NOT include any text outside the two code blocks',
+  '',
+  '== WIRING VALIDATION (CRITICAL) ==',
+  '',
+  '- EVERY component pin in the wiring diagram MUST have at least one wire endpoint.',
+  '- No dangling pins. If an LED has an anode and cathode, BOTH must be wired.',
+  '- Check your work: count the number of wires for each component and verify all pins are covered.',
+  '- Invalid diagrams with orphan pins will fail validation and will be rejected.',
 ].join('\n');
 
 export const SKILL_CONTEXT = {
