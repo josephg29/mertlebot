@@ -1,0 +1,13 @@
+{
+  "board": { "type": "arduino-uno", "x": 80, "y": 120 },
+  "components": [
+    { "type": "led", "id": "led1", "x": 340, "y": 90, "props": { "label": "Status LED", "color": "red" } },
+    { "type": "resistor", "id": "r1", "x": 300, "y": 300, "props": { "label": "220Ω" } }
+  ],
+  "wires": [
+    { "label": "D13", "color": "red", "path": [[122, 110], [300, 310]] },
+    { "label": "V5", "color": "black", "path": [[132, 315], [380, 310]] },
+    { "label": "D12", "color": "green", "path": [[132, 110], [348, 144]] },
+    { "label": "GND", "color": "blue", "path": [[142, 315], [356, 144]] }
+  ]
+}
