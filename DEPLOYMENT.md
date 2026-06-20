@@ -4,26 +4,27 @@ This guide covers deploying Mertle Bot to various platforms.
 
 ## Prerequisites
 
-- Node.js 18+ installed
+- Node.js 20+ installed
 - Anthropic API key
 - Git repository set up
 
 ## Environment Variables
 
-Create a `.env.production` file (never commit this):
+Set these in your host's secret manager (never commit a `.env`):
 
 ```bash
-# Required: Anthropic API key
+# Required: Anthropic API key — powers the whole generation pipeline
 ANTHROPIC_API_KEY=sk-ant-your-key-here
-
-# Optional: DeepSeek API key (if adding DeepSeek provider)
-DEEPSEEK_API_KEY=sk-your-deepseek-key-here
 
 # Optional: Port (defaults to 3000)
 PORT=3000
 
 # Optional: Node environment
 NODE_ENV=production
+
+# Optional: cap Anthropic-billed requests per day to bound demo spend
+# (default 300; set to 0 to disable on a private instance)
+DEMO_DAILY_LIMIT=300
 ```
 
 ## Build Process
@@ -40,24 +41,10 @@ npm run build
 
 ## Deployment Platforms
 
-### Vercel (Recommended)
-
-Vercel provides zero-config deployment for SvelteKit applications.
-
-1. Install Vercel CLI:
-   ```bash
-   npm install -g vercel
-   ```
-
-2. Deploy:
-   ```bash
-   vercel
-   ```
-
-3. Set environment variables in Vercel dashboard:
-   - `ANTHROPIC_API_KEY`: Your Anthropic API key
-
-4. The app will be available at `https://your-project.vercel.app`
+The app uses `@sveltejs/adapter-node` and ships with a `Dockerfile` and
+`fly.toml`, so the cleanest paths are **Fly.io** or any container host.
+(Vercel/Netlify would require switching to their respective SvelteKit
+adapters — not covered here.)
 
 ### Railway
 
@@ -237,8 +224,8 @@ Fly.io provides global edge deployment.
 ### Current Architecture
 - Stateless application
 - No database required
-- Local file storage for config
-- In-memory rate limiting
+- API key read from environment
+- In-memory rate limiting and daily cap (single-instance)
 
 ### Scaling Steps
 1. **10-100 users/day**: Current setup is sufficient
@@ -265,7 +252,7 @@ Fly.io provides global edge deployment.
 - [ ] Security headers set (CSP, HSTS)
 - [ ] No sensitive data in logs
 - [ ] Regular dependency updates
-- [ ] Backup strategy for config files
+- [ ] `DEMO_DAILY_LIMIT` set appropriately for a public instance
 
 ## Troubleshooting
 
@@ -278,7 +265,7 @@ Fly.io provides global edge deployment.
 
 2. **Build fails**
    - Clear node_modules and reinstall
-   - Check Node.js version (18+ required)
+   - Check Node.js version (20+ required)
    - Verify all files are committed
 
 3. **App not starting**
@@ -287,8 +274,8 @@ Fly.io provides global edge deployment.
    - Check logs for errors
 
 4. **Rate limiting too strict**
-   - Adjust `MAX_REQUESTS` in `src/hooks.server.js`
-   - Consider user-based rate limiting
+   - Adjust the per-endpoint limits in `RATE_LIMITS` in `src/hooks.server.js`
+   - Tune the global daily cap via `DEMO_DAILY_LIMIT`
 
 ### Getting Help
 - Check [GitHub Issues](https://github.com/josephg29/mertlebot/issues)

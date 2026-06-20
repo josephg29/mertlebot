@@ -8,9 +8,8 @@ Mertle is a SvelteKit app that takes a natural-language electronics project idea
 
 - **Framework**: SvelteKit 5 (Svelte 5 runes syntax) + Vite 6
 - **Adapter**: `@sveltejs/adapter-node` — built output runs as `node build/index.js`
-- **Database**: SQLite via `better-sqlite3` (sync API, no ORM)
 - **AI**: `@anthropic-ai/sdk`
-- **Auth**: Custom session cookies + CSRF tokens (`src/lib/server/auth.js`)
+- **State**: Stateless — no database. The API key comes from the `ANTHROPIC_API_KEY` env var; there are no user accounts.
 - **Testing**: Vitest
 
 ## Dev Commands
@@ -29,49 +28,42 @@ Docker is also available via `docker-compose.yml`.
 
 ```
 src/
-  hooks.server.js          # Auth guard, CSRF, rate limiter, CSP headers — touches every request
+  hooks.server.js          # Same-origin check, rate limiter, daily demo cap, CSP headers — touches every request
   routes/
-    +page.svelte           # Single-page app — all UI lives here
+    +page.svelte           # Landing page
+    build/+page.svelte     # Build UI (prompt, stream, wiring, guide)
+    contact/               # Contact page
     api/
-      auth/                # Login/logout endpoints
-      generate/            # Main AI generation pipeline
+      generate/            # Main AI generation pipeline (SSE stream + repair)
       clarify/             # Follow-up clarification
       simulate/            # Wokwi simulation export
-      key/                 # API key read/write
+      key/                 # API key status (server-managed, read-only)
       health/              # Health check
   lib/
     server/
-      auth.js              # Session creation, CSRF derivation, password hashing
-      db.js                # SQLite connection, migrations, session helpers
-      config.js            # API key storage (DB-backed with env fallback)
+      config.js            # Reads ANTHROPIC_API_KEY from env
+      llm-service.js       # Claude API wrapper + intent routing
       prompts.js           # All Anthropic prompt templates
       wokwi.js             # Wokwi diagram/simulation helpers
     wiregen/               # SVG wiring canvas components and layout logic
-    projectSupport.js      # Step parsing, Markdown stripping, simulation eligibility
+    projectSupport.js      # Diagram parsing, validation, repair, step/Markdown helpers
     InstructionBook.svelte # Step-by-step guide renderer
 ```
 
 ## Key Architecture Decisions
 
-- **Single-page layout**: The entire UI is `src/routes/+page.svelte`. There are no sub-routes for different views — state is managed in-component.
+- **Mostly single-page**: The build experience lives in `src/routes/build/+page.svelte` with state managed in-component; `+page.svelte` is the landing page. There are no per-view sub-routes beyond `build/` and `contact/`.
 - **Skill levels**: MONKEY / NOVICE / BUILDER / HACKER / EXPERT — passed into prompts to adjust verbosity and hand-holding.
-- **API key**: Stored in SQLite `config` table, with `ANTHROPIC_API_KEY` env var as fallback. `config.json` is gitignored.
-- **Rate limiting**: In-memory, 30 req/60s per IP, cleared every 5 min. Resets on server restart — not suitable for multi-process deployments.
-- **CSRF**: Derived deterministically from the session token via `deriveCsrfToken`. All mutating requests to protected routes require the `x-csrf-token` header.
+- **API key**: Read from the `ANTHROPIC_API_KEY` env var via `src/lib/server/config.js`. There is no DB and no in-app key entry — `/api/key` only reports status (server-managed).
+- **Validation + repair pipeline**: Generated guides flow through `summarizeSupport`/`validateDiagram`/`repairGuide` in `projectSupport.js` before the user sees them — see the README "How it works" diagram. This is the core asset; keep it covered by tests.
+- **Rate limiting**: In-memory, per-IP, per-endpoint (generate 20/min). Resets on server restart — not suitable for multi-process deployments.
+- **Daily demo cap**: In-memory global counter over the Anthropic-billed endpoints, configurable via `DEMO_DAILY_LIMIT` (default 300). Bounds spend on a public demo.
 - **Same-origin enforcement**: All `/api/*` routes reject requests with a mismatched `Origin` header.
 
 ## Security Rules
 
-- Never hardcode API keys — use `ANTHROPIC_API_KEY` env var or the in-app key UI.
-- `config.json` and `.env` are gitignored. Keep them that way.
-- New API routes under `/api/generate`, `/api/clarify`, `/api/simulate`, `/api/key` are automatically session-guarded by `hooks.server.js` — no extra middleware needed.
-- If adding a new public API route, add its prefix to the `AUTH_PREFIXES` exclusion list in `hooks.server.js`.
-
-## Database
-
-- DB file lives at `data/app.db` (or `DATABASE_PATH` / `DATA_DIR` env vars).
-- `getDb()` in `src/lib/server/db.js` returns a singleton connection and runs migrations on first call.
-- Use the sync better-sqlite3 API (`.prepare().run()`, `.prepare().get()`, `.prepare().all()`). No async/await needed.
+- Never hardcode API keys — use the `ANTHROPIC_API_KEY` env var. `.env` is gitignored; keep it that way.
+- All `/api/*` routes are same-origin-enforced and rate-limited by `hooks.server.js`. There is no auth/session layer — the app is stateless.
 
 ## Wokwi Integration
 
@@ -80,5 +72,5 @@ Wokwi simulation is only available for components listed in `SIM_SUPPORTED_COMPO
 ## Testing
 
 - Tests live in `src/tests/`.
-- Run with Vitest. No E2E tests currently exist.
-- Target: 80% coverage on server-side logic (prompts, auth, db helpers).
+- Run with Vitest.
+- Priority target: the validation/repair engine in `projectSupport.js` (`validateDiagram`, `summarizeSupport`, `repairGuide`) and the part classifiers. Fixtures use the real `boardPins.js` geometry so coordinates exercise the actual connectivity tolerance.

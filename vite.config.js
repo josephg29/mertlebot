@@ -9,14 +9,6 @@ export default defineConfig({
   preview: {
     port: 4444
   },
-  ssr: {
-    external: ['better-sqlite3']
-  },
-  build: {
-    rollupOptions: {
-      external: ['nodemailer']
-    }
-  },
   test: {
     include: ['src/tests/**/*.test.{js,ts}'],
     environment: 'node',

@@ -1,0 +1,32 @@
+# Fly.io deployment config — builds the Dockerfile and runs the Node server.
+# Deploy with:  fly launch --copy-config --no-deploy  (first time, to create the app)
+#               fly secrets set ANTHROPIC_API_KEY=sk-ant-...
+#               fly deploy
+app = "mertlebot"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  DEMO_DAILY_LIMIT = "300"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "get"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

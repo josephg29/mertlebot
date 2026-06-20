@@ -1,3 +1,24 @@
+/* ── Global daily demo cap ──
+ * Bounds worst-case Anthropic spend on a public demo regardless of IP rotation
+ * (the per-IP limiter below does not). In-memory, so it resets on restart —
+ * fine for the single-instance demo deployment. Set DEMO_DAILY_LIMIT=0 to
+ * disable (e.g. for a private/self-hosted instance with its own key). */
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DEMO_DAILY_LIMIT = Number.parseInt(process.env.DEMO_DAILY_LIMIT ?? '300', 10);
+const BILLABLE_ENDPOINTS = new Set(['generate', 'clarify', 'simulate']);
+const demoUsage = { count: 0, resetAt: Date.now() + DAY_MS };
+
+function checkDailyCap() {
+  if (!Number.isFinite(DEMO_DAILY_LIMIT) || DEMO_DAILY_LIMIT <= 0) return { ok: true };
+  const now = Date.now();
+  if (now > demoUsage.resetAt) {
+    demoUsage.count = 0;
+    demoUsage.resetAt = now + DAY_MS;
+  }
+  demoUsage.count++;
+  return { ok: demoUsage.count <= DEMO_DAILY_LIMIT, reset: Math.ceil(demoUsage.resetAt / 1000) };
+}
+
 /* ── In-memory rate limiter ── */
 const rateLimitMap = new Map();
 const WINDOW_MS = 60 * 1000;
@@ -77,6 +98,20 @@ export async function handle({ event, resolve }) {
     }
 
     const endpointType = getEndpointType(path);
+
+    if (BILLABLE_ENDPOINTS.has(endpointType)) {
+      const cap = checkDailyCap();
+      if (!cap.ok) {
+        return new Response(JSON.stringify({
+          error: 'The shared demo has reached its limit for today. Please try again tomorrow, or run your own instance with an Anthropic API key.',
+          retryAfter: Math.max(cap.reset - Math.ceil(Date.now() / 1000), 0)
+        }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'RateLimit-Reset': String(cap.reset) }
+        });
+      }
+    }
+
     const identifier = `ip:${event.getClientAddress()}:${endpointType}`;
 
     const limit = checkRateLimit(identifier, endpointType);

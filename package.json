@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "build:pages": "vite build --config showcase/vite.config.js",
     "start": "node build/index.js",
     "preview": "vite preview",
     "test": "vitest run",
@@ -21,8 +22,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.9.0",
     "jszip": "^3.10.1",
     "lucide-svelte": "^1.0.1"
   }

@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last Updated:** April 20, 2026
+**Last Updated:** June 20, 2026
 
 ## 1. Introduction
 
@@ -12,7 +12,8 @@ Mertle Bot ("we," "our," or "us") is committed to protecting your privacy. This 
 - **Project Descriptions**: The hardware project ideas you describe to the Service
 - **Skill Level**: Your selected skill level (Monkey, Novice, Builder, Hacker, Expert)
 - **Age**: Your selected age (used for age-appropriate instructions)
-- **API Key**: If you configure an Anthropic API key, it is stored locally in your browser
+
+The Service has no user accounts: we do not collect names, email addresses, or passwords. The Anthropic API key used for generation is held server-side by the operator and is never collected from or stored on your device.
 
 ### 2.2 Automatically Collected Information
 - **IP Address**: For rate limiting and security purposes
@@ -22,10 +23,8 @@ Mertle Bot ("we," "our," or "us") is committed to protecting your privacy. This 
 
 ### 2.3 Local Storage
 We use browser local storage to:
-- Save your project history
 - Store your theme preferences
 - Remember your skill level and age settings
-- Cache API key (if provided)
 
 ## 3. How We Use Your Information
 
@@ -59,8 +58,7 @@ If we are involved in a merger, acquisition, or asset sale, your information may
 - **Usage Logs**: Retained for 30 days for debugging and optimization
 
 ### 5.2 Client-Side Data
-- **Local Storage**: Persists until you clear your browser data
-- **API Keys**: Stored locally in your browser only
+- **Local Storage**: Theme, skill level, and age preferences persist until you clear your browser data
 
 ### 5.3 Third-Party Data
 We do not control how third-party services (Anthropic, Wokwi) retain data sent to them. Please review their privacy policies.

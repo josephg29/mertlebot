@@ -26,7 +26,6 @@ jobs:
 
       - run: npm test
         env:
-          DATA_DIR: /tmp/mertle-ci-data
           NODE_ENV: test
 
   docker:
@@ -43,7 +42,6 @@ jobs:
         run: |
           docker run -d --name mertle-ci \
             -e ANTHROPIC_API_KEY=dummy-ci-key \
-            -e DATA_DIR=/data \
             -p 3000:3000 \
             mertle-bot
           # Wait for startup (up to 30s)
@@ -52,7 +50,7 @@ jobs:
             STATUS=$(docker inspect --format='{{.State.Status}}' mertle-ci 2>/dev/null || echo "missing")
             if [ "$STATUS" = "running" ]; then
               HEALTH=$(curl -sf http://localhost:3000/api/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
-              if [ "$HEALTH" = "ok" ] || [ "$HEALTH" = "degraded" ]; then
+              if [ "$HEALTH" = "ok" ]; then
                 echo "Health: $HEALTH"
                 docker stop mertle-ci
                 exit 0

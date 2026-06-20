@@ -266,7 +266,7 @@
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="wiregen-canvas" bind:this={canvasEl} on:click={onCanvasClick}>
-  <svg class="wiregen-grid" xmlns="http://www.w3.org/2000/svg">
+  <svg class="wiregen-grid" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <defs>
       <pattern id="wg-grid" width="24" height="24" patternUnits="userSpaceOnUse"
         patternTransform="translate({panX % 24},{panY % 24}) scale({scale})">
@@ -279,6 +279,7 @@
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <svg
     class="wiregen-diagram"
+    aria-label="Interactive wiring diagram for {BOARD_LABELS[diagram.board.type] || diagram.board.type} with {diagram.components?.length || 0} components"
     viewBox="0 0 {VIEW_W} {VIEW_H}"
     preserveAspectRatio="xMidYMid meet"
     on:wheel|preventDefault={onWheel}

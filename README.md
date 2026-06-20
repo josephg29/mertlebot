@@ -1,36 +1,74 @@
 # Mertle Bot
 
-A SvelteKit web app that turns hardware project ideas into full build guides — wiring diagrams, parts lists, Arduino code, and Wokwi simulations — powered by Claude.
+[![CI](https://github.com/josephg29/mertlebot/actions/workflows/ci.yml/badge.svg)](https://github.com/josephg29/mertlebot/actions/workflows/ci.yml)
+[![Pages](https://github.com/josephg29/mertlebot/actions/workflows/pages.yml/badge.svg)](https://josephg29.github.io/mertlebot/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
+
+**▶ Live showcase:** [josephg29.github.io/mertlebot](https://josephg29.github.io/mertlebot/) — the real wiring engine, running client-side (no API key needed).
+
+**Mertle turns a plain-English electronics idea into a buildable project — parts list, Arduino code, a wiring diagram you can actually follow, and a one-click Wokwi simulation.**
+
+The interesting part isn't that it calls an LLM. It's what happens *after* the model answers: every generated circuit is parsed, geometrically validated against real board pin positions, cross-checked against the generated code, and — when something is wrong — automatically repaired before you ever see it. LLMs hallucinate wiring constantly; Mertle is built around catching that.
+
+![Mertle wiring diagram](docs/screenshots/wiring-engine.png)
+
+> A real render from Mertle's SVG wiring engine — Arduino Uno + LED + current-limiting resistor, pins labeled, wires routed.
+
+## How it works
+
+```
+Your prompt
+   │
+   ▼
+Haiku draft (streamed)  ── fast first pass, intent classification
+   │
+   ▼
+summarizeSupport()      ── parse the diagram, check every component pin
+   │                       connects to a real board pin within tolerance,
+   │                       cross-check CODE pins vs the diagram
+   ├── valid ───────────► render the SVG diagram + guide
+   │
+   └── invalid
+        │
+        ▼
+   repairGuide()         ── snap off-pin wires back onto their board pins
+        │
+        ▼
+   Sonnet rewrite        ── escalate to the stronger model if still invalid
+```
+
+The validation and repair logic lives in [`src/lib/projectSupport.js`](src/lib/projectSupport.js) and is covered by [unit tests](src/tests/projectSupport.test.js) that exercise the real pin geometry. The diagram renderer is a custom SVG engine in [`src/lib/wiregen/`](src/lib/wiregen) — no Fritzing, no Wokwi embed, hand-drawn board and part geometry with an automatic wire de-overlap pass.
+
+## Engineering highlights
+
+- **Custom SVG wiring engine** ([`src/lib/wiregen/`](src/lib/wiregen)) — board and component geometry defined pin-by-pin in [`boardPins.js`](src/lib/wiregen/boardPins.js); [`WiringCanvas.svelte`](src/lib/wiregen/WiringCanvas.svelte) renders, pans, and zooms; [`wireDeOverlap.js`](src/lib/wiregen/wireDeOverlap.js) routes wires so they don't stack.
+- **Deterministic validation + repair** ([`src/lib/projectSupport.js`](src/lib/projectSupport.js)) — connectivity checks within a 10px tolerance, I2C-pin enforcement per board, code-vs-diagram pin cross-checks, and a wire-snapping repair pass that fixes near-miss diagrams without another model call.
+- **Two-tier model pipeline** — a fast Haiku draft is validated locally and only escalates to Sonnet for repair when needed, keeping latency and cost down.
 
 ## Features
 
-- **Build guide generation** — describe any electronics project, get back a complete guide with SVG wiring diagram, parts list, and ready-to-flash code
-- **5 skill levels** — Monkey, Novice, Builder, Hacker, Expert — adjusts how Claude explains everything
-- **Interactive wiring diagrams** — SVG diagrams for Arduino Uno/Nano/Mega, ESP32, and common components (LEDs, servos, sensors, LCDs, etc.)
-- **Wokwi simulation** — generates a live Wokwi circuit sim link for supported builds
+- **Build guide generation** — describe a project, get parts, code, an SVG wiring diagram, and a step-by-step guide
+- **5 skill levels** — Monkey, Novice, Builder, Hacker, Expert — adjust how much the guide explains
+- **Wiring diagrams** for Arduino Uno / Nano / Mega and ESP32 with common parts (LEDs, resistors, buttons, servos, sensors, OLED/LCD, …)
+- **Wokwi simulation** — a live circuit-sim link for supported builds
 - **Clarification flow** — asks targeted questions before generating to improve accuracy
-- **User accounts** — register, login, email verification, password reset, account lockout
-- **Project management** — save builds to your account, organize into folders, version history
-- **Cloud sync** — projects sync across sessions
-- **6 themes** — Solder (default), Deep Sea, Phosphor, Amber, Arctic, Sakura
-- **Rate limiting + security headers** — 30 req/min per IP, CSP, no `x-powered-by`
+- **Built-in safety rails** — per-IP rate limiting, a global daily demo cap, same-origin enforcement, and CSP headers
 
-## Tech Stack
+![Mertle landing page](docs/screenshots/landing.png)
 
-- **Frontend** — SvelteKit 2 + Svelte 5
-- **Backend** — SvelteKit API routes (Node.js)
-- **AI** — Anthropic Claude (claude-sonnet / claude-haiku via `@anthropic-ai/sdk`)
-- **Database** — SQLite via `better-sqlite3` with WAL mode and auto-backup
-- **Auth** — custom session-based auth with bcrypt, email verification, and CSRF tokens
-- **Email** — nodemailer (SMTP) or Resend API
-- **Deployment** — `@sveltejs/adapter-node`, Docker-ready
+## Tech stack
 
-## Getting Started
+- **Frontend / backend** — SvelteKit 2 + Svelte 5 (runes), API routes on Node via `@sveltejs/adapter-node`
+- **AI** — Anthropic Claude (`claude-sonnet-4-6` + `claude-haiku-4-5` via `@anthropic-ai/sdk`)
+- **Testing** — Vitest
+- **Deployment** — Docker / Fly.io
+
+## Getting started
 
 ### Prerequisites
 
-- Node.js 18+
-- Anthropic API key — [console.anthropic.com](https://console.anthropic.com/settings/keys)
+- Node.js 20+
+- An Anthropic API key — [console.anthropic.com](https://console.anthropic.com/settings/keys)
 
 ### Installation
 
@@ -38,43 +76,22 @@ A SvelteKit web app that turns hardware project ideas into full build guides —
 git clone https://github.com/josephg29/mertlebot.git
 cd mertlebot
 npm install
-cp .env.example .env.production
-# Add ANTHROPIC_API_KEY to .env.production
+cp .env.example .env
+# add ANTHROPIC_API_KEY to .env
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173)
+Open [http://localhost:4444](http://localhost:4444).
 
-### Environment Variables
+### Environment variables
 
-Create `.env.production` (never commit this):
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `ANTHROPIC_API_KEY` | yes | — | Powers the whole generation pipeline |
+| `PORT` | no | `3000` | Production server port |
+| `DEMO_DAILY_LIMIT` | no | `300` | Caps Anthropic-billed requests/day; `0` disables |
 
-```bash
-# Required
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Database (optional, defaults to ./data/app.db)
-DATABASE_PATH=/path/to/app.db
-DATA_DIR=/path/to/data/
-
-# Email — choose one:
-# Option 1: SMTP
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=user@example.com
-SMTP_PASS=yourpassword
-SMTP_FROM=noreply@example.com
-
-# Option 2: Resend
-RESEND_API_KEY=re_...
-EMAIL_FROM=noreply@yourdomain.com
-
-# App
-PUBLIC_APP_URL=https://yourdomain.com
-BACKUP_RETAIN_DAYS=7
-```
-
-### Building for Production
+### Production
 
 ```bash
 npm run build
@@ -87,43 +104,40 @@ npm start
 docker compose up --build
 ```
 
-## Project Structure
+See [DEPLOYMENT.md](DEPLOYMENT.md) for Fly.io and container deployment.
+
+## Project structure
 
 ```
 src/
+├── hooks.server.js           # Same-origin checks, rate limit, daily cap, CSP
 ├── routes/
-│   ├── +page.svelte          # Main build UI (hero, chat, wiring, settings)
-│   ├── +layout.svelte        # Root layout with Navigation and auth store
-│   ├── about/                # About page
-│   ├── auth/                 # Auth pages (login, register, verify, reset)
-│   ├── build/                # Dedicated build route
-│   ├── contact/              # Contact page
-│   ├── pricing/              # Pricing page
+│   ├── +page.svelte          # Landing
+│   ├── build/                # Build UI (prompt, stream, wiring, guide)
+│   ├── contact/
 │   └── api/
-│       ├── generate/         # Main build guide generation (SSE stream)
+│       ├── generate/         # Build guide generation (SSE stream + repair)
 │       ├── clarify/          # Clarification questions
 │       ├── simulate/         # Wokwi simulation generation
-│       ├── auth/             # Auth endpoints (login, register, logout, verify, reset)
-│       ├── projects/         # Project CRUD + sync
-│       ├── folders/          # Folder management
-│       ├── user/             # Profile, password, email, notifications
+│       ├── key/              # API-key status (server-managed)
 │       └── health/           # Health check
 ├── lib/
 │   ├── server/
-│   │   ├── auth.js           # Auth utilities (hashing, tokens, cookies, CSRF)
-│   │   ├── db.js             # SQLite layer — migrations, all DB operations
-│   │   ├── email.js          # Email sending (SMTP or Resend)
-│   │   ├── llm-service.js    # Claude API wrapper
+│   │   ├── config.js         # Reads ANTHROPIC_API_KEY from env
+│   │   ├── llm-service.js    # Claude API wrapper + intent routing
 │   │   ├── prompts.js        # System prompts per skill level
-│   │   └── wokwi.js          # Wokwi simulation helpers
-│   └── wiregen/              # SVG wiring diagram components
+│   │   └── wokwi.js          # Wokwi diagram/sketch payloads
+│   ├── projectSupport.js     # Diagram parsing, validation, and repair
+│   └── wiregen/              # Custom SVG wiring engine
 │       ├── WiringCanvas.svelte
-│       ├── boards/           # Arduino Uno, Nano, Mega, ESP32
-│       └── parts/            # LED, servo, DHT22, LCD, button, etc.
-└── app.css                   # Global styles + theme variables
+│       ├── boardPins.js      # Pin geometry per board
+│       ├── wireDeOverlap.js  # Wire routing
+│       ├── boards/           # Uno, Nano, Mega, ESP32
+│       └── parts/            # LED, resistor, servo, DHT22, OLED, …
+└── tests/                    # Vitest suites (validation engine, wokwi)
 ```
 
-## API Reference
+## API reference
 
 ### `POST /api/generate`
 Streams a build guide via Server-Sent Events.
@@ -143,17 +157,33 @@ Returns clarification questions for a prompt.
 Generates a Wokwi simulation URL from a completed guide.
 
 ### `GET /api/health`
-Returns `{ status: "ok" }`.
+Returns `{ status: "ok", apiConfigured, timestamp }`.
 
-## Skill Levels
+## Skill levels
 
 | # | Name | Audience |
 |---|------|----------|
 | 1 | MONKEY | 6-year-old, maximum hand-holding |
-| 2 | NOVICE | 1-2 prior projects, friendly explanations |
+| 2 | NOVICE | 1–2 prior projects, friendly explanations |
 | 3 | BUILDER | Comfortable with electronics, technical but accessible |
 | 4 | HACKER | Experienced maker, concise and direct |
 | 5 | EXPERT | Professional engineer, peer-level |
+
+## Testing
+
+```bash
+npm test          # single run
+npm run test:watch
+```
+
+The suite focuses on the validation engine in `projectSupport.js` — happy-path circuits, missing/duplicate pins, label/endpoint mismatches, I2C-pin enforcement, and the repair pass — using fixtures built from the real `boardPins.js` geometry.
+
+## Regenerating screenshots
+
+```bash
+node scripts/capture-diagram.mjs   # renders the wiring engine to docs/screenshots/
+node scripts/capture-app.mjs       # screenshots a running server's landing page
+```
 
 ## License
 

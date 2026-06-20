@@ -8,20 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial public release
-- Complete documentation
-- Terms of Service and Privacy Policy
-- Contributing guidelines
+- Unit tests for the diagram validation and repair engine (`projectSupport.js`)
+- Global daily demo cap (`DEMO_DAILY_LIMIT`) to bound public-demo API spend
+- Headless capture scripts and real screenshots of the wiring engine and app
+- Accessibility labels on the wiring SVGs (`role="img"` + `aria-label`; grid marked decorative)
 
 ### Changed
-- Updated README with comprehensive documentation
-- Improved security headers configuration
-- Enhanced error handling in API endpoints
+- README/CLAUDE/deploy docs rewritten around the validation+repair pipeline
+- Deployment standardized on Docker/Fly.io with a slimmer, native-dependency-free image
 
-### Fixed
-- Rate limiting implementation
-- CORS policy enforcement
-- Local storage cleanup on session reset
+### Removed
+- Dead SQLite database layer left over from the removed accounts feature
+  (`better-sqlite3`, `bcryptjs`, `src/lib/server/db.js`)
 
 ## [1.0.0] - 2026-04-20
 
