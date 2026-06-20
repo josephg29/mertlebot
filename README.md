@@ -1,7 +1,10 @@
 # Mertle Bot
 
 [![CI](https://github.com/josephg29/mertlebot/actions/workflows/ci.yml/badge.svg)](https://github.com/josephg29/mertlebot/actions/workflows/ci.yml)
+[![Pages](https://github.com/josephg29/mertlebot/actions/workflows/pages.yml/badge.svg)](https://josephg29.github.io/mertlebot/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
+
+**▶ Live showcase:** [josephg29.github.io/mertlebot](https://josephg29.github.io/mertlebot/) — the real wiring engine, running client-side (no API key needed).
 
 **Mertle turns a plain-English electronics idea into a buildable project — parts list, Arduino code, a wiring diagram you can actually follow, and a one-click Wokwi simulation.**
 

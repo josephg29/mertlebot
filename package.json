@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "build:pages": "vite build --config showcase/vite.config.js",
     "start": "node build/index.js",
     "preview": "vite preview",
     "test": "vitest run",

@@ -1,6 +1,7 @@
 node_modules/
 config.json
 /build/
+/build-pages/
 !src/routes/build/
 .svelte-kit/
 data/*.db

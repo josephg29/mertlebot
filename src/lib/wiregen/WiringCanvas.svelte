@@ -279,8 +279,7 @@
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <svg
     class="wiregen-diagram"
-    role="img"
-    aria-label="Wiring diagram for {BOARD_LABELS[diagram.board.type] || diagram.board.type} with {diagram.components?.length || 0} components"
+    aria-label="Interactive wiring diagram for {BOARD_LABELS[diagram.board.type] || diagram.board.type} with {diagram.components?.length || 0} components"
     viewBox="0 0 {VIEW_W} {VIEW_H}"
     preserveAspectRatio="xMidYMid meet"
     on:wheel|preventDefault={onWheel}
